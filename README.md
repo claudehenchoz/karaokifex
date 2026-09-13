@@ -4,10 +4,45 @@ Turn a YouTube music video into a karaoke video: the lead vocals are removed (ba
 picture is slightly darkened, and the lyrics are burned in with a word-by-word highlight.
 
 ```
-uv run karaokifex "https://www.youtube.com/watch?v=..." --artist "Artist" --song "Song"
+karaokifex "https://www.youtube.com/watch?v=..." --artist "Artist" --song "Song"
 ```
 
 Artist and song are optional. If you leave them out, they are taken from the video's metadata or title.
+
+## Installation
+
+Prerequisites:
+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- An NVIDIA GPU with a current driver (strongly recommended; PyTorch is installed as a CUDA 12.8 build)
+- [ffmpeg](https://ffmpeg.org/download.html) on `PATH`, built with libass; version 4.3 or newer for GPU encoding
+- [Node.js](https://nodejs.org/) or [Deno](https://deno.com/) on `PATH` (yt-dlp needs one for YouTube)
+
+Install karaokifex as a command-line tool:
+
+```
+uv tool install --python 3.12 git+https://github.com/claudehenchoz/karaokifex
+```
+
+Afterwards `karaokifex` is available in any terminal. If it isn't found, run `uv tool update-shell` and
+open a new terminal. On first use, the separation model (~1 GB) and whisper large-v3 (~3 GB) are
+downloaded. Each song gets its own folder in the directory you run karaokifex from.
+
+Upgrade or remove it with:
+
+```
+uv tool upgrade karaokifex
+uv tool uninstall karaokifex
+```
+
+To run it from a checkout instead:
+
+```
+git clone https://github.com/claudehenchoz/karaokifex
+cd karaokifex
+uv sync
+uv run karaokifex "https://www.youtube.com/watch?v=..."
+```
 
 ## How it works
 
@@ -40,7 +75,17 @@ which also keeps backing vocals out of the transcription. The Roformer model run
 with an overlap of 2, about 4.6× faster than audio-separator's defaults (fp32, overlap 8) in a benchmark
 on an RTX 3070. `--overlap 8 --fp32` restores those defaults if you want the last bit of quality.
 
-Run `uv run karaokifex --help` for all options.
+Rendering decodes and encodes on the GPU (`-hwaccel cuda` + NVENC); only the darkening and subtitle
+filters run on the CPU. The output is an MKV, like the download. The video keeps the source's format when
+the GPU can encode it; otherwise it uses the most efficient format the GPU can encode. For example, an
+RTX 30xx can't encode AV1, so AV1 sources become HEVC. The bitrate follows the source's, scaled by how
+efficient the output format is, so the file ends up about the size of the original. The audio keeps
+the source's codec (usually Opus). PATH often holds several ffmpeg builds (ImageMagick ships an old one),
+so karaokifex test-drives each one and uses the first that has libass and can encode with NVENC. If none
+can, it falls back to x264 on the CPU at below-normal priority. Use `--ffmpeg` or `KARAOKIFEX_FFMPEG` to
+pick a specific one.
+
+Run `karaokifex --help` for all options.
 
 ## Code layout
 
@@ -63,17 +108,3 @@ src/karaokifex/
 uv sync
 uv run pytest
 ```
-
-Rendering decodes and encodes on the GPU (`-hwaccel cuda` + NVENC); only the darkening and subtitle
-filters run on the CPU. The output is an MKV, like the download. The video keeps the source's format when
-the GPU can encode it; otherwise it uses the most efficient format the GPU can encode. For example, an
-RTX 30xx can't encode AV1, so AV1 sources become HEVC. The bitrate follows the source's, scaled by how
-efficient the output format is, so the file ends up about the size of the original. The audio keeps
-the source's codec (usually Opus). PATH often holds several ffmpeg builds (ImageMagick ships an old one),
-so karaokifex test-drives each one and uses the first that has libass and can encode with NVENC. If none
-can, it falls back to x264 on the CPU at below-normal priority. Use `--ffmpeg` or `KARAOKIFEX_FFMPEG` to
-pick a specific one.
-
-Requirements: ffmpeg with libass on `PATH` (4.3 or newer for NVENC on current drivers), and Node.js or Deno (yt-dlp needs one for YouTube). An NVIDIA
-GPU is strongly recommended; PyTorch is installed from the CUDA 12.8 index. On first use, the separation
-models (~1 GB) and whisper large-v3 (~3 GB) are downloaded.
