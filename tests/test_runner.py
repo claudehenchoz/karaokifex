@@ -26,6 +26,18 @@ def test_dependencies_run_in_order_and_pass_results():
     assert report.ok and report.outcomes["b"].result == 42
 
 
+def test_take_hands_over_a_result_and_forgets_it():
+    seen = {}
+
+    def consumer(ctx):
+        seen["taken"] = ctx.take("a")
+        seen["after"] = ctx.result("a")
+
+    report = TaskRunner([Task("a", lambda ctx: "model"), Task("b", consumer, deps=("a",))]).run()
+    assert seen == {"taken": "model", "after": None}
+    assert report.outcomes["a"].result is None  # nothing keeps the value alive any more
+
+
 def test_independent_tasks_run_concurrently():
     barrier = threading.Barrier(2, timeout=5)  # only passes if both tasks are running at once
     report = TaskRunner([Task("x", lambda ctx: barrier.wait()), Task("y", lambda ctx: barrier.wait())]).run()

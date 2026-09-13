@@ -8,7 +8,7 @@ import os
 import shutil
 import subprocess
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -20,33 +20,81 @@ log = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[float | None], None]
 
+# Output video formats, most efficient first, with their encoder on the GPU (NVENC) and on the CPU.
+FORMATS = ("av1", "hevc", "h264")
+GPU_ENCODERS = {"av1": "av1_nvenc", "hevc": "hevc_nvenc", "h264": "h264_nvenc"}
+CPU_ENCODERS = {"av1": "libsvtav1", "hevc": "libx265", "h264": "libx264"}
+# Roughly how many bits each format needs for the same picture quality, relative to AV1.
+BITRATE_FACTOR = {"av1": 1.0, "vp9": 1.3, "hevc": 1.3, "h264": 1.8}
+# Audio encoder and bitrate per source audio codec; anything else becomes AAC.
+AUDIO_ENCODERS = {"opus": ("libopus", "160k"), "aac": ("aac", "256k")}
+
+_SOFTWARE_ENCODERS = frozenset({*CPU_ENCODERS.values(), "libopus", "aac"})
+
 
 @dataclass(frozen=True)
 class Encoder:
-    codec: str
-    options: dict[str, Any] = field(hash=False)
+    format: str  # "av1" | "hevc" | "h264"
     gpu: bool
+
+    @property
+    def codec(self) -> str:
+        return (GPU_ENCODERS if self.gpu else CPU_ENCODERS)[self.format]
 
     @property
     def label(self) -> str:
         return f"{self.codec} ({'GPU' if self.gpu else 'CPU'})"
 
-
-# p5 is one of NVENC's modern presets (ffmpeg >= 4.3); current NVIDIA drivers reject the legacy ones.
-NVENC = Encoder("h264_nvenc", {"preset": "p5", "tune": "hq", "rc": "vbr", "cq": 19, "b:v": 0}, gpu=True)
-X264 = Encoder("libx264", {"preset": "medium", "crf": 18}, gpu=False)
+    def options(self, bitrate: int | None) -> dict[str, Any]:
+        """Encoder options: an average bitrate when known, constant quality otherwise."""
+        if self.gpu:
+            if bitrate:
+                rate: dict[str, Any] = {"b:v": bitrate, "maxrate": 2 * bitrate, "bufsize": 4 * bitrate}
+            else:
+                rate = {"cq": 23, "b:v": 0}
+            # p4 is NVENC's balanced preset. The modern p1-p7 presets need ffmpeg >= 4.3;
+            # current drivers reject the legacy ones.
+            return {"preset": "p4", "tune": "hq", "rc": "vbr", **rate}
+        preset = {"av1": 8, "hevc": "fast", "h264": "medium"}[self.format]
+        rate = {"b:v": bitrate} if bitrate else {"crf": {"av1": 32, "hevc": 22, "h264": 20}[self.format]}
+        return {"preset": preset, **rate}
 
 
 @dataclass(frozen=True)
 class FfmpegBinary:
-    """The ffmpeg executable to run, and the video encoder it can drive."""
+    """The ffmpeg executable to run, and what it can encode on this machine."""
 
     path: str = "ffmpeg"
-    encoder: Encoder = X264
+    gpu_formats: frozenset[str] = frozenset()
+    software: frozenset[str] = frozenset({"libx264", "aac"})
+
+    @property
+    def gpu(self) -> bool:
+        return bool(self.gpu_formats)
+
+    @property
+    def ffprobe(self) -> str:
+        sibling = Path(self.path).with_name(Path(self.path).name.lower().replace("ffmpeg", "ffprobe"))
+        return str(sibling) if sibling.is_file() else "ffprobe"
+
+    def describe(self) -> str:
+        if not self.gpu:
+            return "no GPU encoder — CPU only"
+        return "GPU encoders: " + ", ".join(f for f in FORMATS if f in self.gpu_formats)
+
+
+@dataclass(frozen=True)
+class SourceInfo:
+    video_format: str | None = None
+    video_bitrate: int | None = None
+    audio_format: str | None = None
 
 
 class FfmpegError(RuntimeError):
     pass
+
+
+# --- choosing ffmpeg and encoders ------------------------------------------------------
 
 
 @functools.cache
@@ -54,17 +102,57 @@ def find_ffmpeg(explicit: str | None = None) -> FfmpegBinary:
     """Pick the ffmpeg to use: the first one on PATH that burns in subtitles and encodes on the GPU.
 
     PATH often holds several builds (ImageMagick ships an old one), and old builds can't drive
-    current NVIDIA drivers, so each candidate is test-driven with a tiny encode.
+    current NVIDIA drivers, so each candidate is test-driven with tiny encodes.
     """
     candidates = [explicit] if explicit else _ffmpegs_on_path()
     usable = [candidate for candidate in candidates if _has_libass(candidate)]
     if not usable:
         raise FfmpegError(f"no ffmpeg with libass (needed to burn in subtitles) among: {', '.join(candidates)}")
     for candidate in usable:
-        if _can_encode(candidate, NVENC):
-            return FfmpegBinary(candidate, NVENC)
+        if gpu_formats := frozenset(f for f in FORMATS if _can_encode(candidate, GPU_ENCODERS[f])):
+            return FfmpegBinary(candidate, gpu_formats, _software_encoders(candidate))
     log.warning("no ffmpeg that can encode on the GPU (NVENC) found — rendering on the CPU will be slow")
-    return FfmpegBinary(usable[0], X264)
+    return FfmpegBinary(usable[0], frozenset(), _software_encoders(usable[0]))
+
+
+def choose_encoder(source_format: str | None, tool: FfmpegBinary, *, gpu: bool = True) -> Encoder:
+    """The source's own format if possible, else the most efficient one; the GPU beats the CPU."""
+    order = sorted(FORMATS, key=lambda f: f != source_format)  # stable sort: source format first
+    if gpu:
+        for fmt in order:
+            if fmt in tool.gpu_formats:
+                return Encoder(fmt, gpu=True)
+    for fmt in order:
+        if CPU_ENCODERS[fmt] in tool.software:
+            return Encoder(fmt, gpu=False)
+    raise FfmpegError(f"{tool.path} has no usable video encoder")
+
+
+def target_bitrate(source: SourceInfo, fmt: str) -> int | None:
+    """The source's bitrate, scaled for how efficient the output format is compared to the source's."""
+    if not source.video_bitrate or source.video_format not in BITRATE_FACTOR:
+        return source.video_bitrate
+    return round(source.video_bitrate * BITRATE_FACTOR[fmt] / BITRATE_FACTOR[source.video_format])
+
+
+def audio_encoder(source_format: str | None, tool: FfmpegBinary) -> tuple[str, str]:
+    codec, bitrate = AUDIO_ENCODERS.get(source_format or "", AUDIO_ENCODERS["aac"])
+    return (codec, bitrate) if codec in tool.software else AUDIO_ENCODERS["aac"]
+
+
+def probe_source(video: Path, original: Path | None, *, ffprobe: str = "ffprobe") -> SourceInfo:
+    """Format and bitrate of the (video-only) extract, plus the original download's audio codec."""
+    info = ffmpeg.probe(str(video), cmd=ffprobe)
+    stream = next((s for s in info["streams"] if s.get("codec_type") == "video"), {})
+    bitrate = int(stream.get("bit_rate") or 0)
+    duration = float(info.get("format", {}).get("duration") or 0)
+    if not bitrate and duration:  # MKV rarely records per-stream bitrates; the file holds only this stream
+        bitrate = int(video.stat().st_size * 8 / duration)
+    audio_format = None
+    if original is not None and original.exists():
+        streams = ffmpeg.probe(str(original), cmd=ffprobe)["streams"]
+        audio_format = next((s.get("codec_name") for s in streams if s.get("codec_type") == "audio"), None)
+    return SourceInfo(stream.get("codec_name"), bitrate or None, audio_format)
 
 
 def _ffmpegs_on_path() -> list[str]:
@@ -75,25 +163,37 @@ def _ffmpegs_on_path() -> list[str]:
     return list(found.values()) or ["ffmpeg"]
 
 
-def _has_libass(binary: str) -> bool:
+def _output(args: list[str]) -> str:
     try:
-        output = subprocess.run([binary, "-hide_banner", "-filters"], capture_output=True, text=True, timeout=30).stdout
+        return subprocess.run(args, capture_output=True, text=True, timeout=30).stdout
     except (OSError, subprocess.SubprocessError):
-        return False
-    return any(line.split()[1:2] == ["subtitles"] for line in output.splitlines())
+        return ""
 
 
-def _can_encode(binary: str, encoder: Encoder) -> bool:
+def _has_libass(binary: str) -> bool:
+    lines = _output([binary, "-hide_banner", "-filters"]).splitlines()
+    return any(line.split()[1:2] == ["subtitles"] for line in lines)
+
+
+def _software_encoders(binary: str) -> frozenset[str]:
+    lines = _output([binary, "-hide_banner", "-encoders"]).splitlines()
+    return frozenset(parts[1] for line in lines if len(parts := line.split()) > 1) & _SOFTWARE_ENCODERS
+
+
+def _can_encode(binary: str, codec: str) -> bool:
     args = [binary, "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x240:d=0.2",
-            "-c:v", encoder.codec, *_as_args(encoder.options), "-f", "null", "-"]
+            "-c:v", codec, "-preset", "p4", "-f", "null", "-"]
     try:
         return subprocess.run(args, capture_output=True, timeout=30).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
 
 
-def _as_args(options: dict[str, Any]) -> list[str]:
-    return [item for key, value in options.items() for item in (f"-{key}", str(value))]
+def format_bitrate(bitrate: int | None) -> str:
+    return f"{bitrate / 1_000_000:.1f} Mbit/s" if bitrate else "constant quality"
+
+
+# --- the ffmpeg jobs -----------------------------------------------------------------------
 
 
 def extract_audio(source: Path, target: Path, *, binary: str = "ffmpeg", duration: float | None = None,
@@ -114,27 +214,35 @@ def extract_video(source: Path, target: Path, *, binary: str = "ffmpeg", duratio
     partial.replace(target)
 
 
-def render(video: Path, audio: Path, subtitles: Path, target: Path, *, tool: FfmpegBinary, darken: float,
-           duration: float | None = None, on_progress: ProgressCallback | None = None) -> str:
+def render(video: Path, audio: Path, subtitles: Path, target: Path, *, tool: FfmpegBinary, source: SourceInfo,
+           darken: float, duration: float | None = None, on_progress: ProgressCallback | None = None) -> str:
     """Darken the video, burn in the subtitles and pair it with the karaoke audio.
 
-    Returns a label for the encoder that was used. Falls back to x264 if the GPU encoder fails.
+    Encodes to the source's video format at a comparable bitrate when the hardware allows, and
+    falls back to the CPU if the GPU encoder fails. Returns a description of the encoding.
     """
-    encoders = [tool.encoder] if tool.encoder == X264 else [tool.encoder, X264]
-    for index, encoder in enumerate(encoders):
+    attempts = [choose_encoder(source.video_format, tool)]
+    if attempts[0].gpu:
+        attempts.append(choose_encoder(source.video_format, tool, gpu=False))
+    audio_codec, audio_bitrate = audio_encoder(source.audio_format, tool)
+    for index, encoder in enumerate(attempts):
+        bitrate = target_bitrate(source, encoder.format)
+        log.info("source %s at %s → %s at %s, audio %s", source.video_format or "unknown",
+                 format_bitrate(source.video_bitrate), encoder.label, format_bitrate(bitrate), audio_codec)
         try:
-            _render(tool.path, encoder, video, audio, subtitles, target,
+            _render(tool.path, encoder, bitrate, (audio_codec, audio_bitrate), video, audio, subtitles, target,
                     darken=darken, duration=duration, on_progress=on_progress)
-            return encoder.label
+            return f"{encoder.label} at {format_bitrate(bitrate)} + {audio_codec}"
         except FfmpegError as error:
-            if index == len(encoders) - 1:
+            if index == len(attempts) - 1:
                 raise
-            log.warning("%s failed, falling back to %s: %s", encoder.label, encoders[index + 1].label, error)
+            log.warning("%s failed, falling back to %s: %s", encoder.label, attempts[index + 1].label, error)
     raise AssertionError("unreachable")
 
 
-def _render(binary: str, encoder: Encoder, video: Path, audio: Path, subtitles: Path, target: Path, *,
-            darken: float, duration: float | None, on_progress: ProgressCallback | None) -> None:
+def _render(binary: str, encoder: Encoder, bitrate: int | None, audio_encoding: tuple[str, str], video: Path,
+            audio: Path, subtitles: Path, target: Path, *, darken: float, duration: float | None,
+            on_progress: ProgressCallback | None) -> None:
     # The subtitles filter chokes on Windows drive letters ("C:"), so ffmpeg runs
     # inside the output folder and gets every path relative to it.
     folder = target.parent
@@ -152,10 +260,11 @@ def _render(binary: str, encoder: Encoder, video: Path, audio: Path, subtitles: 
         .filter("subtitles", relative(subtitles))
     )
     sound = ffmpeg.input(relative(audio)).audio
+    audio_codec, audio_bitrate = audio_encoding
     stream = ffmpeg.output(
         picture, sound, relative(partial),
-        vcodec=encoder.codec, acodec="aac", audio_bitrate="320k", pix_fmt="yuv420p", movflags="+faststart",
-        shortest=None, **encoder.options,
+        vcodec=encoder.codec, acodec=audio_codec, audio_bitrate=audio_bitrate, pix_fmt="yuv420p", shortest=None,
+        **encoder.options(bitrate),
     )
     run(stream, binary=binary, cwd=folder, duration=duration, on_progress=on_progress)
     partial.replace(target)

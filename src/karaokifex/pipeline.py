@@ -17,11 +17,13 @@ import logging
 from dataclasses import dataclass
 from functools import partial
 
+import ffmpeg
 from rich.live import Live
 
 from karaokifex.ass import build_ass
 from karaokifex.config import Config
 from karaokifex.console import TaskBoard, console, register_tasks
+from karaokifex.gpu import free_gpu_memory
 from karaokifex.metadata import guess_artist_song
 from karaokifex.models import VideoInfo
 from karaokifex.runner import RunReport, Task, TaskContext, TaskRunner, current_task
@@ -74,7 +76,7 @@ def prepare(config: Config) -> Job:
         ffmpeg = media.find_ffmpeg(config.ffmpeg)
         log.info("“%s” (%s) → %s – %s", info.title, _format_length(info.duration), artist, song)
         log.info("working folder: %s · device: %s", workspace.root, device)
-        log.info("ffmpeg: %s · video encoder: %s", ffmpeg.path, ffmpeg.encoder.label)
+        log.info("ffmpeg: %s · %s", ffmpeg.path, ffmpeg.describe())
         return Job(config, workspace, info, artist, song, device, ffmpeg)
     finally:
         current_task.reset(token)
@@ -98,7 +100,7 @@ def build_tasks(job: Job) -> list[Task]:
         Task("subtitles", partial(_subtitles, job), deps=("lyrics", "transcribe"), outputs=(ws.subtitles,),
              description="lyrics + word timings → karaoke ASS"),
         Task("render", partial(_render, job), deps=("extract_video", "separate_karaoke", "subtitles"),
-             outputs=(ws.final_video,), gpu=job.ffmpeg.encoder.gpu,
+             outputs=(ws.final_video,), gpu=job.ffmpeg.gpu,
              description="darken, karaoke audio, burn in subtitles"),
     ]
 
@@ -162,12 +164,15 @@ def _load_whisper(job: Job, ctx: TaskContext) -> object:
 
 
 def _transcribe(job: Job, ctx: TaskContext) -> None:
-    model = ctx.result("load_whisper")
+    # take(): the runner must not keep the model alive — it would hog GPU memory during render.
+    model = ctx.take("load_whisper")
     if model is None:  # load_whisper was skipped because an old transcript existed, but vocals changed
         ctx.note("loading model…")
         model = transcription.load_model(job.config.whisper_model, job.device, job.config.language)
     words, language = transcription.transcribe(model, job.workspace.karaoke_lead, job.device,
                                                language=job.config.language, on_stage=ctx.note)
+    del model
+    free_gpu_memory()
     transcription.save_transcript(words, language, job.workspace.transcript_json)
     log.info("heard %d words (language: %s)", len(words), language)
 
@@ -198,10 +203,17 @@ def _subtitles(job: Job, ctx: TaskContext) -> None:
 
 def _render(job: Job, ctx: TaskContext) -> str:
     ws = job.workspace
-    encoder = media.render(ws.video, ws.karaoke_backing, ws.subtitles, ws.final_video, tool=job.ffmpeg,
-                           darken=job.config.darken, duration=job.info.duration, on_progress=ctx.progress)
-    log.info("rendered %s with %s", ws.final_video.name, encoder)
-    return encoder
+    try:
+        source = media.probe_source(ws.video, ws.source, ffprobe=job.ffmpeg.ffprobe)
+    except (ffmpeg.Error, OSError) as error:
+        log.warning("couldn't inspect the source video (%s) — encoding at constant quality", error)
+        source = media.SourceInfo()
+    encoding = media.render(ws.video, ws.karaoke_backing, ws.subtitles, ws.final_video, tool=job.ffmpeg,
+                            source=source, darken=job.config.darken, duration=job.info.duration,
+                            on_progress=ctx.progress)
+    size = ws.final_video.stat().st_size / 1_048_576
+    log.info("rendered %s (%.0f MiB) with %s", ws.final_video.name, size, encoding)
+    return encoding
 
 
 def _format_length(seconds: float | None) -> str:

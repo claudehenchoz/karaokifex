@@ -20,7 +20,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol, Sequence
+from typing import Any, Callable, Mapping, MutableMapping, Protocol, Sequence
 
 log = logging.getLogger("karaokifex")
 
@@ -72,12 +72,19 @@ class TaskContext:
     """Handed to every task function: upstream results plus progress reporting."""
 
     name: str
-    _results: Mapping[str, Any]
+    _results: MutableMapping[str, Any]
     _observer: RunObserver
+    _outcomes: Mapping[str, TaskOutcome] = field(default_factory=dict)
 
     def result(self, task: str) -> Any:
         """Return value of an upstream task (None if it was cached)."""
         return self._results.get(task)
+
+    def take(self, task: str) -> Any:
+        """Like result(), but the runner forgets the value, so it can be freed (e.g. a model in GPU memory)."""
+        if (outcome := self._outcomes.get(task)) is not None:
+            outcome.result = None
+        return self._results.pop(task, None)
 
     def progress(self, fraction: float | None) -> None:
         self._observer.task_progress(self.name, fraction)
@@ -191,11 +198,12 @@ class TaskRunner:
                         self._set_status(name, report.outcomes[name], Status.CACHED)
                         _log_as(name, logging.INFO, "↺ reusing existing output")
                     else:
-                        running[pool.submit(self._execute, task, report.outcomes[name], results)] = name
+                        running[pool.submit(self._execute, task, report.outcomes, results)] = name
 
-    def _execute(self, task: Task, outcome: TaskOutcome, results: Mapping[str, Any]) -> Any:
+    def _execute(self, task: Task, outcomes: Mapping[str, TaskOutcome], results: MutableMapping[str, Any]) -> Any:
         token = current_task.set(task.name)
-        context = TaskContext(task.name, results, self.observer)
+        outcome = outcomes[task.name]
+        context = TaskContext(task.name, results, self.observer, outcomes)
         try:
             if not task.gpu:
                 return self._run_timed(task, context, outcome)

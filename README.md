@@ -21,7 +21,7 @@ Artist and song are optional. If you leave them out, they are taken from the vid
 | `load_whisper`     | whisperx model load (runs early, while everything else works)   | –                                           |
 | `transcribe`       | whisperx transcription + word alignment on the lead vocals      | `transcript.json`                           |
 | `subtitles`        | lrclib lines + whisperx word times → karaoke ASS (`\kf` tags)   | `lyrics.ass`                                |
-| `render`           | ffmpeg: darken, burn in subtitles, karaoke audio (GPU decode + NVENC) | `<Artist - Song> (Karaoke).mp4`       |
+| `render`           | ffmpeg: darken, burn in subtitles, karaoke audio (GPU decode + NVENC) | `<Artist - Song> (Karaoke).mkv`       |
 
 Each step starts as soon as its inputs exist, so the lyrics lookup, the download, and the whisperx model
 load all run at the same time. GPU-heavy steps take turns (`--gpu-jobs` raises that limit). A live task
@@ -64,8 +64,12 @@ uv sync
 uv run pytest
 ```
 
-Rendering decodes and encodes on the GPU (`-hwaccel cuda` + `h264_nvenc`); only the darkening and
-subtitle filters run on the CPU. PATH often holds several ffmpeg builds (ImageMagick ships an old one),
+Rendering decodes and encodes on the GPU (`-hwaccel cuda` + NVENC); only the darkening and subtitle
+filters run on the CPU. The output is an MKV, like the download. The video keeps the source's format when
+the GPU can encode it; otherwise it uses the most efficient format the GPU can encode. For example, an
+RTX 30xx can't encode AV1, so AV1 sources become HEVC. The bitrate follows the source's, scaled by how
+efficient the output format is, so the file ends up about the size of the original. The audio keeps
+the source's codec (usually Opus). PATH often holds several ffmpeg builds (ImageMagick ships an old one),
 so karaokifex test-drives each one and uses the first that has libass and can encode with NVENC. If none
 can, it falls back to x264 on the CPU at below-normal priority. Use `--ffmpeg` or `KARAOKIFEX_FFMPEG` to
 pick a specific one.

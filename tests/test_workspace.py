@@ -39,6 +39,17 @@ def test_cleanup_keeps_artifacts(tmp_path):
     assert not any(path.exists() for path in temp)
 
 
+def test_cleanup_keeps_karaoke_videos_from_earlier_runs(tmp_path):
+    ws = Workspace.create(tmp_path, "Artist [Live] - Song")  # glob metacharacters in the name
+    earlier = ws.final_video.with_suffix(".mp4")
+    half_written = ws.root / f"{ws.final_video.stem}.partial.mkv"
+    for path in (earlier, half_written, ws.source):
+        path.write_text("x")
+    assert set(ws.temp_files()) == {half_written, ws.source}
+    ws.cleanup()
+    assert earlier.exists()
+
+
 def test_cleanup_removes_empty_folders(tmp_path):
     ws = Workspace.create(tmp_path, "Artist - Song")
     ws.karaoke_lead.write_text("x")

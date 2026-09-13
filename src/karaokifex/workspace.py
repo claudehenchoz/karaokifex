@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import glob
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -88,12 +89,14 @@ class Workspace:
 
     @property
     def final_video(self) -> Path:
-        return self.root / f"{sanitize_name(self.title)} (Karaoke).mp4"
+        return self.root / f"{sanitize_name(self.title)} (Karaoke).mkv"
 
     # --- cleanup -----------------------------------------------------------------
     def artifacts(self) -> frozenset[Path]:
-        """Files worth keeping after a successful run."""
-        return frozenset({self.final_video, self.subtitles, self.karaoke_backing, self.lyrics_json})
+        """Files worth keeping after a successful run — including karaoke videos from earlier runs."""
+        earlier_renders = self.root.glob(f"{glob.escape(self.final_video.stem)}.*")
+        keep = {self.final_video, self.subtitles, self.karaoke_backing, self.lyrics_json}
+        return frozenset(keep | {p for p in earlier_renders if ".partial." not in p.name})
 
     def temp_files(self) -> list[Path]:
         """Every file in the workspace that is not an artifact."""
