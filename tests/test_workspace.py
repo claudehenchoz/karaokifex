@@ -1,0 +1,47 @@
+from pathlib import Path
+
+import pytest
+
+from karaokifex.workspace import Workspace, partial_path, sanitize_name
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("AC/DC: Back In Black?", "ACDC Back In Black"),
+        ("  spaced   out  ", "spaced out"),
+        ("trailing dots...", "trailing dots"),
+        ('a<b>c|d*e"f', "abcdef"),
+        ("", "untitled"),
+        ("CON", "_CON"),
+    ],
+)
+def test_sanitize_name(name, expected):
+    assert sanitize_name(name) == expected
+
+
+def test_sanitize_name_truncates():
+    assert len(sanitize_name("x" * 300)) == 100
+
+
+def test_partial_path():
+    assert partial_path(Path("a/audio.wav")) == Path("a/audio.partial.wav")
+
+
+def test_cleanup_keeps_artifacts(tmp_path):
+    ws = Workspace.create(tmp_path, "Artist - Song")
+    temp = [ws.source, ws.audio, ws.video, ws.karaoke_lead, ws.transcript_json]
+    for path in [*temp, *ws.artifacts()]:
+        path.write_text("x")
+    assert set(ws.temp_files()) == set(temp)
+    assert set(ws.cleanup()) == set(temp)
+    assert all(path.exists() for path in ws.artifacts())
+    assert not any(path.exists() for path in temp)
+
+
+def test_cleanup_removes_empty_folders(tmp_path):
+    ws = Workspace.create(tmp_path, "Artist - Song")
+    ws.karaoke_lead.write_text("x")
+    ws.cleanup()
+    assert not ws.stems_dir.exists()
+    assert ws.root.exists()

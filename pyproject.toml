@@ -1,13 +1,46 @@
 [project]
 name = "karaokifex"
 version = "0.1.0"
-description = "Add your description here"
+description = "Turn a YouTube music video into a karaoke video with word-by-word highlighted lyrics"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "audio-separator[gpu]>=0.45.0",
+    # No [gpu] extra: Roformer models run on CUDA through PyTorch; the extra only adds onnxruntime-gpu
+    # (for ONNX models), whose CUDA 13 build clashes with PyTorch's CUDA 12 runtime.
+    "audio-separator>=0.45.0",
+    "audioread>=3.0",  # imported by audio-separator but not declared as its dependency
     "click>=8.5.0",
     "ffmpeg-python>=0.2.0",
+    "hf-xet>=1.1",  # fast Hugging Face model downloads (whisper); avoids a fallback warning
+    "requests>=2.32",
+    "rich>=14.0",
+    "torch>=2.8.0",
+    "torchaudio>=2.8.0",
+    "torchvision>=0.23.0",
     "whisperx>=3.8.6",
-    "yt-dlp>=2026.8.19",
+    "yt-dlp[default]>=2026.8.19",  # [default] bundles the YouTube JS challenge solver (yt-dlp-ejs)
 ]
+
+[project.scripts]
+karaokifex = "karaokifex.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.3"]
+
+[build-system]
+requires = ["uv_build>=0.9.7,<0.10.0"]
+build-backend = "uv_build"
+
+# CUDA builds of PyTorch (PyPI only has CPU wheels for Windows).
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }]
+torchaudio = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

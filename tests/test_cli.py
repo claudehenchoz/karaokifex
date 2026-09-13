@@ -1,0 +1,67 @@
+import pytest
+from click.testing import CliRunner
+
+from karaokifex import cli
+from karaokifex.config import Config
+from karaokifex.models import VideoInfo
+from karaokifex.pipeline import Job, PipelineResult
+from karaokifex.runner import RunReport, Status, TaskOutcome
+from karaokifex.workspace import Workspace
+
+URL = "https://youtu.be/x"
+
+
+@pytest.fixture
+def fake_run(monkeypatch, tmp_path):
+    """Replaces the real pipeline; returns a dict that records the Config and lets tests pick success/failure."""
+    state = {"ok": True}
+    workspace = Workspace.create(tmp_path, "Artist - Song")
+    workspace.source.write_text("temp")
+    workspace.final_video.write_text("final")
+    state["workspace"] = workspace
+
+    def run(config):
+        state["config"] = config
+        render = (TaskOutcome(Status.DONE, 2.0, "libx264") if state["ok"]
+                  else TaskOutcome(Status.FAILED, 2.0, error=RuntimeError("boom")))
+        report = RunReport({"lyrics": TaskOutcome(Status.DONE, 1.0, "lrclib #1"), "render": render})
+        job = Job(config, workspace, VideoInfo(id="x", title="t"), "Artist", "Song", "cpu")
+        return PipelineResult(job, report)
+
+    monkeypatch.setattr(cli, "run_pipeline", run)
+    return state
+
+
+def test_options_become_config(fake_run):
+    args = [URL, "-a", "Artist", "-s", "Song", "--gpu-jobs", "2", "--overlap", "4", "--fp32", "--autodelete"]
+    result = CliRunner().invoke(cli.main, args)
+    assert result.exit_code == 0, result.output
+    config: Config = fake_run["config"]
+    assert (config.url, config.artist, config.song, config.gpu_jobs, config.autodelete) == (URL, "Artist", "Song", 2, True)
+    assert (config.separation_overlap, config.fp16) == (4, False)
+
+
+def test_autodelete_removes_temp_files_without_asking(fake_run):
+    result = CliRunner().invoke(cli.main, [URL, "--autodelete"])
+    assert result.exit_code == 0, result.output
+    assert not fake_run["workspace"].source.exists()
+    assert fake_run["workspace"].final_video.exists()
+
+
+def test_prompt_accepted_removes_temp_files(fake_run):
+    result = CliRunner().invoke(cli.main, [URL], input="y\n")
+    assert result.exit_code == 0, result.output
+    assert not fake_run["workspace"].source.exists()
+
+
+def test_prompt_declined_keeps_temp_files(fake_run):
+    result = CliRunner().invoke(cli.main, [URL], input="n\n")
+    assert result.exit_code == 0, result.output
+    assert fake_run["workspace"].source.exists()
+
+
+def test_failed_run_exits_nonzero_and_keeps_files(fake_run):
+    fake_run["ok"] = False
+    result = CliRunner().invoke(cli.main, [URL, "--autodelete"])
+    assert result.exit_code == 1
+    assert fake_run["workspace"].source.exists()
