@@ -40,10 +40,19 @@ def transcribe(model: Any, vocals: Path, device: str, *, language: str | None = 
 
     audio = whisperx.load_audio(str(vocals))
     on_stage("transcribing…")
+    detected = language is None
     result = model.transcribe(audio, batch_size=BATCH_SIZE, language=language)
     language = result["language"]
+    if detected:
+        log.info("auto-detected language: %s (use --language to override)", language)
     on_stage(f"aligning words ({language})…")
-    align_model, metadata = whisperx.load_align_model(language_code=language, device=device)
+    try:
+        align_model, metadata = whisperx.load_align_model(language_code=language, device=device)
+    except ValueError as error:
+        # Detection only listens to the first 30 s, and singing easily fools it (Björk → Welsh).
+        hint = "was auto-detected, which is easily fooled by singing" if detected else "was requested"
+        raise ValueError(f"whisperx has no word-alignment model for language {language!r}, which {hint}. "
+                         f"Re-run with --language set to the song's language, e.g. --language en") from error
     aligned = whisperx.align(result["segments"], align_model, metadata, audio, device, return_char_alignments=False)
     del align_model
     free_gpu_memory()
