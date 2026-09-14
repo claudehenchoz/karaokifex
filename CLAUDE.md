@@ -1,0 +1,84 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+Karaokifex turns a YouTube music video into a karaoke video (lead vocals removed, lyrics burned in with a
+word-by-word highlight). See README.md for user-facing usage, the step table and the installation instructions.
+
+## Commands
+
+- `uv sync`: install everything. torch/torchaudio/torchvision come from the PyTorch **cu128** index
+  (`[tool.uv.sources]` in pyproject.toml); PyPI only has CPU wheels on Windows.
+- `uv run pytest`: the full suite takes about 1 s and needs no GPU, network or ffmpeg.
+- Single test: `uv run pytest tests/test_timing.py::test_repeated_chorus_matches_the_right_occurrence`
+- `uv run karaokifex <url> -a <artist> -s <song> [-l en] [-o <dir>] [--force] [--autodelete] [-v]`
+- No linter or formatter is configured.
+
+While a karaokifex run is active, use `uv run --no-sync …`. On Windows the running process locks DLLs,
+so `uv sync` fails halfway. If a sync ever uninstalls `onnxruntime-gpu`, the shared `onnxruntime`
+package folder gets deleted too: repair it with `uv sync --reinstall-package onnxruntime`.
+
+End-to-end runs use the user's single 8 GB GPU. Never start one while the user's run is active
+(`Get-Process karaokifex`); overlapping runs made both many times slower. Send test runs to a scratch
+folder with `-o`, never into the user's song folders.
+
+## Architecture
+
+**Task graph + runner.** `pipeline.prepare()` probes the video synchronously; its metadata names the
+per-song folder and it picks the ffmpeg binary. `pipeline.build_tasks()` then declares the steps as
+`runner.Task`s with `deps`, `outputs` and a `gpu` flag. `runner.TaskRunner` is generic: it starts every
+task whose deps are done on a thread pool, shares a GPU semaphore (`--gpu-jobs`), skips the dependents
+of failed tasks, and reports state to an observer (the live board).
+
+**Caching / resume.** A task is marked "cached" only if all its `outputs` exist *and* every dependency
+was cached too. Correctness therefore depends on outputs being written atomically: write to
+`workspace.partial_path(p)`, then rename. Keep that pattern in every new step. `load_whisper` declares
+the transcript as its output, so the model isn't loaded when the transcript already exists.
+
+**Results and GPU memory.** Task return values stay in the runner until the run ends. A task consuming
+a GPU object must use `ctx.take("task")` rather than `ctx.result(...)`, and then free it
+(`gpu.free_gpu_memory()`); see `_transcribe` in pipeline.py.
+
+**Module roles.** `steps/` wraps one external tool per module (yt-dlp, ffmpeg, audio-separator, lrclib,
+whisperx). Heavy imports (torch, whisperx, audio_separator) happen *inside* functions. Keep it that
+way: CLI startup stays fast, and the tests never import them (test_transcription.py injects a fake
+`whisperx` module). The pure logic, where the tests concentrate, lives in:
+- `timing.py`: lyrics ↔ whisper words matching. It is a DP alignment in which a pair is allowed only
+  inside that lyric line's lrclib time window, so repeated choruses match the right occurrence. A global
+  timing offset is estimated first, which handles music videos with longer intros.
+- `ass.py`: `\kf` karaoke tags. Durations are differences of rounded absolute times, so the tags always
+  sum to the line length. Lines alternate between an upper and a lower slot.
+- `metadata.py`: artist/song from yt-dlp metadata or the video title.
+
+**Logging.** `runner.current_task` (a ContextVar set inside each worker) tags every log line with its
+task (`console.TaskLogHandler`). Some libraries install their own console handlers: `setup_logging`
+pre-configures the `whisperx` logger, and `console.adopt_loggers` re-routes lightning after import. Known
+harmless messages are dropped by `_DropKnownNoise`. `cli.py` sets `TQDM_DISABLE` and
+`HF_HUB_DISABLE_PROGRESS_BARS` *before* any other import, so progress bars don't garble the live board.
+
+## Decisions and environment facts (don't undo without reason)
+
+- **One separation pass.** The karaoke model (`mel_band_roformer_karaoke_gabox.ckpt`) outputs the
+  backing track (for render) *and* the lead vocals, which are what whisperx transcribes. A separate
+  vocal-isolation pass was removed at the user's request because it was very slow.
+- **Separation speed.** Separation runs with `use_native_fp16` and overlap 2 (model configs default to 8).
+  That is about 4.6× faster; `--overlap 8 --fp32` restores the defaults. `use_autocast` has no effect on
+  Roformers.
+- **No `[gpu]` extra for audio-separator.** It pulls `onnxruntime-gpu` built for CUDA 13, which conflicts
+  with torch's CUDA 12.8 and only matters for ONNX models; Roformers run on CUDA through torch.
+  `audioread`, `hf-xet` and `yt-dlp[default]` are explicit dependencies for real reasons (see the
+  pyproject comments).
+- **ffmpeg selection** (`steps/media.find_ffmpeg`). PATH holds several ffmpeg builds; ImageMagick's 4.2.3
+  comes first and can't drive NVENC on current drivers. Each candidate is test-driven (it needs libass
+  and a working NVENC encode); `--ffmpeg` / `KARAOKIFEX_FFMPEG` override the choice.
+- **Rendering.** CUDA decode plus NVENC (preset p4). eq and subtitles run on the CPU; ffmpeg runs at
+  below-normal priority. ffmpeg runs with `cwd` set to the song folder and relative paths, because the
+  subtitles filter can't handle Windows drive letters. Output is MKV: the source's codec if the GPU can
+  encode it, otherwise the most efficient one it can (the RTX 3070 has no AV1 NVENC, so AV1 sources
+  become HEVC). The bitrate is the source's, scaled by `BITRATE_FACTOR`, and the audio keeps the
+  source's codec (Opus).
+- **yt-dlp** needs a JavaScript runtime for YouTube. Node is enabled via `js_runtimes` in `steps/download.py`.
+- **Language.** whisperx language auto-detection (first 30 s) is unreliable on singing (it heard Björk as
+  Welsh); `-l/--language` forces the language.
+- **Cleanup.** `Workspace.artifacts()` defines what survives cleanup, including karaoke videos from
+  earlier runs; everything else in the song folder is temporary.
