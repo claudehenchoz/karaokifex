@@ -33,12 +33,14 @@ def fake_run(monkeypatch, tmp_path):
 
 
 def test_options_become_config(fake_run):
-    args = [URL, "-a", "Artist", "-s", "Song", "--gpu-jobs", "2", "--overlap", "4", "--fp32", "--autodelete"]
+    args = [URL, "-a", "Artist", "-s", "Song", "--gpu-jobs", "2", "--overlap", "4", "--fp32", "--autodelete",
+            "--mix-vote", "--debug-ass"]
     result = CliRunner().invoke(cli.main, args)
     assert result.exit_code == 0, result.output
     config: Config = fake_run["config"]
     assert (config.url, config.artist, config.song, config.gpu_jobs, config.autodelete) == (URL, "Artist", "Song", 2, True)
     assert (config.separation_overlap, config.fp16) == (4, False)
+    assert (config.mix_vote, config.debug_ass) == (True, True)
 
 
 def test_autodelete_removes_temp_files_without_asking(fake_run):

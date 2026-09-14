@@ -27,6 +27,8 @@ class Config:
     darken: float = 0.08
     output_dir: Path = Path(".")
     model_dir: Path = DEFAULT_MODEL_DIR
+    mix_vote: bool = False  # also transcribe the full mix and let both transcriptions vote
+    debug_ass: bool = False  # render with words coloured by timing source
     autodelete: bool = False
     force: bool = False
     verbose: bool = False

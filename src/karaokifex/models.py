@@ -43,10 +43,22 @@ class VideoInfo:
 
 @dataclass(frozen=True)
 class LyricLine:
-    """One line of lyrics; `start` is only known for synced (LRC) lyrics."""
+    """One line of lyrics; `start` is only known for synced (LRC) lyrics.
+
+    Enhanced LRC also times single words: `word_starts` then has one entry per
+    `timing.split_words(text)` word (None for untagged words), and `end` is the
+    closing tag after the last word, if any.
+    """
 
     start: float | None
     text: str
+    word_starts: tuple[float | None, ...] | None = None
+    end: float | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> LyricLine:
+        starts = data.get("word_starts")
+        return cls(data["start"], data["text"], None if starts is None else tuple(starts), data.get("end"))
 
 
 @dataclass(frozen=True)
@@ -66,17 +78,23 @@ class Lyrics:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Lyrics:
-        lines = tuple(LyricLine(**line) for line in data["lines"])
+        lines = tuple(LyricLine.from_dict(line) for line in data["lines"])
         return cls(**{**data, "lines": lines})
 
 
 @dataclass(frozen=True)
 class TimedWord:
-    """A word with start/end time in seconds (from whisperx, or after merging)."""
+    """A word with start/end time in seconds (from whisperx, or after merging).
+
+    `score` is the aligner's confidence (0–1) when known. `source` says which
+    mechanism timed a merged word: forced, whisper, lrc-tag, lrc-line or interpolated.
+    """
 
     text: str
     start: float
     end: float
+    score: float | None = None
+    source: str = ""
 
 
 @dataclass(frozen=True)

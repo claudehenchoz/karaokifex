@@ -34,7 +34,8 @@ log = logging.getLogger("karaokifex")
 @click.argument("url")
 @click.option("-a", "--artist", help="Artist name. Default: taken from the video metadata or title.")
 @click.option("-s", "--song", help="Song name. Default: taken from the video metadata or title.")
-@click.option("-l", "--language", help="Language code for transcription, e.g. 'en'. Default: auto-detect.")
+@click.option("-l", "--language",
+              help="Language code, e.g. 'en'. Default: detected from the lyrics, else from the singing.")
 @click.option("--karaoke-model", default=DEFAULT_KARAOKE_MODEL, show_default=True,
               help="audio-separator model splitting lead vocals from the rest (backing vocals included).")
 @click.option("--whisper-model", default=DEFAULT_WHISPER_MODEL, show_default=True, help="whisperx model.")
@@ -55,6 +56,11 @@ log = logging.getLogger("karaokifex")
               show_default=True, help="Where the per-song folder is created.")
 @click.option("--model-dir", type=click.Path(file_okay=False, path_type=Path), default=DEFAULT_MODEL_DIR,
               show_default=True, help="Cache folder for separation models.")
+@click.option("--mix-vote", is_flag=True,
+              help="Also transcribe the full mix and let both transcriptions vote on word times (slower).")
+@click.option("--debug-ass", is_flag=True,
+              help="Render '(Karaoke debug).mkv' with each word coloured by what timed it "
+                   "(green forced, cyan whisper, violet LRC tag, orange LRC line, red interpolated).")
 @click.option("--autodelete", is_flag=True, help="Delete temporary files at the end without asking.")
 @click.option("--force", is_flag=True, help="Redo every step, even if its output already exists.")
 @click.option("-v", "--verbose", is_flag=True, help="Show debug output, including the libraries' logs.")
@@ -84,8 +90,9 @@ def show_result(result: PipelineResult) -> None:
     outcomes = result.report.outcomes
     details = [("Song", result.job.title), ("Folder", str(ws.root.resolve()))]
     if result.ok:
-        details.insert(0, ("Video", str(ws.final_video.resolve())))
-        lyrics_source = outcomes["lyrics"].result or "lrclib (from an earlier run)"
+        details.insert(0, ("Video", str(result.job.output_video.resolve())))
+        chosen = outcomes["subtitles"].result if "subtitles" in outcomes else None
+        lyrics_source = chosen or outcomes["lyrics"].result or "lrclib (from an earlier run)"
         details.append(("Lyrics", lyrics_source))
     for name, error in result.report.failures.items():
         details.append((f"✖ {name}", f"{type(error).__name__}: {error}"))

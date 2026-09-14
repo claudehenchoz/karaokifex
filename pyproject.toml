@@ -8,21 +8,26 @@ dependencies = [
     # No [gpu] extra: Roformer models run on CUDA through PyTorch; the extra only adds onnxruntime-gpu
     # (for ONNX models), whose CUDA 13 build clashes with PyTorch's CUDA 12 runtime.
     "audio-separator>=0.45.0",
-    "audioread>=3.0",  # imported by audio-separator but not declared as its dependency
+    "audioread>=3.0", # imported by audio-separator but not declared as its dependency
     "click>=8.5.0",
     "ffmpeg-python>=0.2.0",
-    "hf-xet>=1.1",  # fast Hugging Face model downloads (whisper); avoids a fallback warning
+    "hf-xet>=1.1", # fast Hugging Face model downloads (whisper); avoids a fallback warning
+    "jellyfish>=1.2.1",
+    "langdetect>=1.0.9",
+    "numpy>=2.5.3",
     "requests>=2.32",
     "rich>=14.0",
+    "soundfile>=0.14.0",
     "torch>=2.8.0",
     "torchaudio>=2.8.0",
     "torchvision>=0.23.0",
     "whisperx>=3.8.6",
-    "yt-dlp[default]>=2026.8.19",  # [default] bundles the YouTube JS challenge solver (yt-dlp-ejs)
+    "yt-dlp[default]>=2026.8.19", # [default] bundles the YouTube JS challenge solver (yt-dlp-ejs)
 ]
 
 [project.scripts]
 karaokifex = "karaokifex.cli:main"
+karaokifex-eval = "karaokifex.evaluate:main"
 
 [dependency-groups]
 dev = ["pytest>=8.3"]

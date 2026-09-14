@@ -74,6 +74,11 @@ class Workspace:
         """Lead vocals only — what whisperx transcribes."""
         return self.stems_dir / "karaoke_lead.wav"
 
+    @property
+    def lead_activity(self) -> Path:
+        """When the lead vocals are audible (see activity.py)."""
+        return self.stems_dir / "lead_activity.npz"
+
     # --- lyrics & subtitles ------------------------------------------------------
     @property
     def lyrics_json(self) -> Path:
@@ -84,17 +89,42 @@ class Workspace:
         return self.root / "transcript.json"
 
     @property
+    def transcript_mix_json(self) -> Path:
+        """Transcription of the full mix (--mix-vote)."""
+        return self.root / "transcript_mix.json"
+
+    @property
+    def forced_json(self) -> Path:
+        """Time map, line windows and forced-alignment results per lyrics candidate."""
+        return self.root / "forced.json"
+
+    @property
+    def timings_json(self) -> Path:
+        """Every displayed word with its time, score and source (for karaokifex-eval)."""
+        return self.root / "timings.json"
+
+    @property
     def subtitles(self) -> Path:
         return self.root / "lyrics.ass"
+
+    @property
+    def debug_subtitles(self) -> Path:
+        """Like lyrics.ass, but each word coloured by what timed it."""
+        return self.root / "lyrics.debug.ass"
 
     @property
     def final_video(self) -> Path:
         return self.root / f"{sanitize_name(self.title)} (Karaoke).mkv"
 
+    @property
+    def debug_video(self) -> Path:
+        return self.root / f"{sanitize_name(self.title)} (Karaoke debug).mkv"
+
     # --- cleanup -----------------------------------------------------------------
     def artifacts(self) -> frozenset[Path]:
         """Files worth keeping after a successful run — including karaoke videos from earlier runs."""
-        earlier_renders = self.root.glob(f"{glob.escape(self.final_video.stem)}.*")
+        earlier_renders = [*self.root.glob(f"{glob.escape(self.final_video.stem)}.*"),
+                           *self.root.glob(f"{glob.escape(self.debug_video.stem)}.*")]
         keep = {self.final_video, self.subtitles, self.karaoke_backing, self.lyrics_json}
         return frozenset(keep | {p for p in earlier_renders if ".partial." not in p.name})
 

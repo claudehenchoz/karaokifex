@@ -52,10 +52,13 @@ uv run karaokifex "https://www.youtube.com/watch?v=..."
 | `extract_audio`    | ffmpeg                                                          | `audio.wav`                                 |
 | `extract_video`    | ffmpeg (stream copy)                                            | `video.mkv`                                 |
 | `separate_karaoke` | audio-separator, `mel_band_roformer_karaoke_gabox.ckpt`         | `stems/karaoke_backing.wav`, `stems/karaoke_lead.wav` |
-| `lyrics`           | lrclib.net, closest match by song length                        | `lyrics.json`                               |
+| `lyrics`           | lrclib.net, up to 3 versions (the one that fits the audio wins) | `lyrics.json`                               |
 | `load_whisper`     | whisperx model load (runs early, while everything else works)   | –                                           |
-| `transcribe`       | whisperx transcription + word alignment on the lead vocals      | `transcript.json`                           |
-| `subtitles`        | lrclib lines + whisperx word times → karaoke ASS (`\kf` tags)   | `lyrics.ass`                                |
+| `vocal_activity`   | energy envelope of the lead vocals: when someone is singing     | `stems/lead_activity.npz`                   |
+| `transcribe`       | whisperx on the lead vocals, prompted with the lyrics           | `transcript.json`                           |
+| `transcribe_mix`   | only with `--mix-vote`: whisperx on the full mix                | `transcript_mix.json`                       |
+| `force_align`      | lrclib → video time map, then wav2vec2 forced alignment of each lyric line | `forced.json`                    |
+| `subtitles`        | best timing source per word, snapped to the voice → karaoke ASS (`\kf` tags) | `lyrics.ass`, `lyrics.debug.ass`, `timings.json` |
 | `render`           | ffmpeg: darken, burn in subtitles, karaoke audio (GPU decode + NVENC) | `<Artist - Song> (Karaoke).mkv`       |
 
 Each step starts as soon as its inputs exist, so the lyrics lookup, the download, and the whisperx model
@@ -68,7 +71,38 @@ up where it stopped (`--force` redoes everything). At the end, karaokifex asks b
 temporary files (`--autodelete` skips the question). It keeps the video, the ASS file, the karaoke audio
 track, and the lyrics.
 
-If lrclib has no lyrics for the song, the lines are built from the whisperx transcription instead.
+### How the words get their timing
+
+The lyrics are known, so the job is finding *when* each word is sung:
+
+1. **Time map.** Music videos often have a longer intro, are sped up a few percent, or cut a verse.
+   lrclib's line starts are first cross-correlated with the vocal onsets, giving a global offset. A robust
+   line fit (`video = scale × lrclib + offset`) through the lines whisperx heard then refines it, and
+   sections that jumped get their own shift. Lines whose place in the video is silent, or that don't fit
+   between their heard neighbours, were cut from the video and are not shown.
+2. **Forced alignment.** Each lyric line is aligned inside its window on the lead vocals by wav2vec2 (the
+   same aligner whisperx uses), so every word gets a time and a confidence score.
+3. **Merging.** Per word, the best source wins: enhanced-LRC word tags from lrclib, then a confident forced
+   alignment, then the words whisperx heard (matched by spelling, sound, and "alright"/"all right"-style
+   merges), and finally interpolation into the parts of the gap where someone sings.
+4. **The voice decides.** Words whisperx "heard" in silence are dropped, words don't start in silence,
+   and a line's last word lasts until the held note ends.
+
+Whisper is prompted with the lyrics and set to the lyrics' language (detected from their text, or
+`--language`). `--mix-vote` additionally transcribes the full mix and lets both transcriptions vote,
+at the cost of a second whisperx pass. If lrclib has no lyrics for the song, the lines are built from
+the whisperx transcription instead.
+
+To check timing, `--debug-ass` renders `(Karaoke debug).mkv` with each word coloured by what timed it:
+violet LRC tag, green forced alignment, cyan whisperx, orange lrclib line start, red interpolated.
+Low-confidence words are underlined. `lyrics.debug.ass` is written on every run, so
+`mpv video.mkv --sub-file=lyrics.debug.ass` shows the same thing without rendering.
+
+To measure timing, put a `reference.ass` (for example timed in Aegisub against the video) or an enhanced
+`reference.lrc` into a song folder and keep its temporary files. `karaokifex-eval <song folder>...` then
+reports the median word onset error and the share of words within 100/300 ms, per timing source.
+`--recompute` re-runs the alignment from the cached files (no GPU needed), and `--baseline` compares
+against whisper-only matching.
 
 There is a single stem separation pass. The karaoke model's lead-vocal stem doubles as whisperx's input,
 which also keeps backing vocals out of the transcription. The Roformer model runs in half precision
@@ -97,7 +131,10 @@ src/karaokifex/
   console.py      rich logging + live task board
   workspace.py    per-song folder and file names
   timing.py       lyrics + word timestamps → timed lines (pure)
+  mapping.py      lrclib → video time map (pure)
+  activity.py     when the lead vocals are audible (pure)
   ass.py          timed lines → karaoke ASS (pure)
+  evaluate.py     karaokifex-eval: timing accuracy against a reference
   metadata.py     artist/song from video metadata (pure)
   steps/          one module per external tool: download, media, separation, lyrics, transcription
 ```

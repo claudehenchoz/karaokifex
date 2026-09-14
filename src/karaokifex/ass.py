@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
-from karaokifex.models import TimedLine
+from karaokifex.models import TimedLine, TimedWord
 
 LEAD_IN = 1.5  # seconds a line is shown before its first word
 LINGER = 0.5  # seconds a line stays after its last word
@@ -43,7 +43,24 @@ def escape_text(text: str) -> str:
     return text.replace("\\", "⧵").replace("{", "(").replace("}", ")")
 
 
-def karaoke_text(line: TimedLine, shown_at: float) -> str:
+# Debug mode: unsung words take the colour of what timed them (&HBBGGRR); a low score underlines them.
+SOURCE_COLOURS = {
+    "lrc-tag": "&HFF60C0&",  # violet
+    "forced": "&H40E040&",  # green
+    "whisper": "&HE0E000&",  # cyan
+    "lrc-line": "&H0090FF&",  # orange
+    "interpolated": "&H3030FF&",  # red
+}
+LOW_SCORE = 0.3
+
+
+def _debug_tags(word: TimedWord) -> str:
+    colour = SOURCE_COLOURS.get(word.source, "&HFFFFFF&")
+    low = word.score is not None and word.score < LOW_SCORE
+    return f"\\2c{colour}\\1c&HFFFFFF&\\u{int(low)}"
+
+
+def karaoke_text(line: TimedLine, shown_at: float, *, debug: bool = False) -> str:
     """The `{\\k..}`-tagged text for one line, relative to when the line appears.
 
     Durations are differences of rounded absolute times, so rounding errors never
@@ -61,7 +78,8 @@ def karaoke_text(line: TimedLine, shown_at: float) -> str:
         cursor = lead
     for index, word in enumerate(line.words):
         end = max(centis(word.end), cursor)
-        parts.append(f"{{\\kf{end - cursor}}}{escape_text(word.text)}")
+        tags = _debug_tags(word) if debug else ""
+        parts.append(f"{{\\kf{end - cursor}{tags}}}{escape_text(word.text)}")
         cursor = end
         if index + 1 < len(line.words):
             next_start = max(centis(line.words[index + 1].start), cursor)
@@ -90,7 +108,8 @@ def display_windows(lines: Sequence[TimedLine]) -> list[tuple[float, float]]:
 
 
 def build_ass(lines: Sequence[TimedLine], *, width: int, height: int, title: str | None = None,
-              style: KaraokeStyle = KaraokeStyle()) -> str:
+              style: KaraokeStyle = KaraokeStyle(), debug: bool = False) -> str:
+    """The karaoke subtitle file; `debug` colours every word by what timed it and adds a legend."""
     size = round(height * style.font_scale)
     outline = max(1, round(height / 360))
     shadow = max(1, round(height / 540))
@@ -137,5 +156,10 @@ def build_ass(lines: Sequence[TimedLine], *, width: int, height: int, title: str
                                "{\\fad(300,300)}" + escape_text(title)))
     for index, (line, (shown, hidden)) in enumerate(zip(lines, windows)):
         slot = "Upper" if index % 2 == 0 else "Lower"
-        events.append(dialogue(shown, hidden, slot, "{\\fad(150,200)}" + karaoke_text(line, shown)))
+        events.append(dialogue(shown, hidden, slot, "{\\fad(150,200)}" + karaoke_text(line, shown, debug=debug)))
+    if debug and lines:
+        header.insert(header.index("[Events]") - 1, style_line("Legend", round(size * 0.45), 7, margin_side))
+        legend = " ".join(f"{{\\c{colour}}}{name}" for name, colour in SOURCE_COLOURS.items())
+        events.append(dialogue(0.0, lines[-1].end + LINGER, "Legend",
+                               legend + "{\\c&HFFFFFF&} · underlined: low score"))
     return "\n".join(header + events) + "\n"

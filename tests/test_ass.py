@@ -41,6 +41,17 @@ def test_display_windows_share_slots_without_overlap():
             assert shown >= windows[index - 2][1]
 
 
+def test_debug_mode_colours_words_by_source():
+    timed = TimedLine((TimedWord("One", 5, 6, 0.9, "forced"), TimedWord("Two", 6, 7, 0.1, "interpolated")))
+    ass = build_ass([timed], width=1280, height=720, debug=True)
+    assert "\\2c&H40E040&" in ass and "\\2c&H3030FF&" in ass
+    assert "\\u1}Two" in ass  # low score is underlined
+    assert "Legend" in ass
+    plain = build_ass([timed], width=1280, height=720)
+    assert "\\2c" not in plain and "Legend" not in plain
+    assert sum(int(v) for v in K_TAG.findall(karaoke_text(timed, 4.0, debug=True))) == 300
+
+
 def test_build_ass_structure():
     lines = [line(("One", 5, 6)), line(("Two", 7, 8)), line(("Three", 9, 10))]
     ass = build_ass(lines, width=1280, height=720, title="Artist – Song")

@@ -11,7 +11,9 @@ word-by-word highlight). See README.md for user-facing usage, the step table and
   (`[tool.uv.sources]` in pyproject.toml); PyPI only has CPU wheels on Windows.
 - `uv run pytest`: the full suite takes about 1 s and needs no GPU, network or ffmpeg.
 - Single test: `uv run pytest tests/test_timing.py::test_repeated_chorus_matches_the_right_occurrence`
-- `uv run karaokifex <url> -a <artist> -s <song> [-l en] [-o <dir>] [--force] [--autodelete] [-v]`
+- `uv run karaokifex <url> -a <artist> -s <song> [-l en] [-o <dir>] [--force] [--autodelete] [--debug-ass] [--mix-vote] [-v]`
+- `uv run karaokifex-eval <song folder>... [--recompute [--baseline]]`: word onset error against a
+  `reference.ass`/`reference.lrc` in the folder. `--recompute` needs the folder's temp files and no GPU.
 - No linter or formatter is configured.
 
 While a karaokifex run is active, use `uv run --no-sync …`. On Windows the running process locks DLLs,
@@ -43,9 +45,18 @@ a GPU object must use `ctx.take("task")` rather than `ctx.result(...)`, and then
 whisperx). Heavy imports (torch, whisperx, audio_separator) happen *inside* functions. Keep it that
 way: CLI startup stays fast, and the tests never import them (test_transcription.py injects a fake
 `whisperx` module). The pure logic, where the tests concentrate, lives in:
-- `timing.py`: lyrics ↔ whisper words matching. It is a DP alignment in which a pair is allowed only
-  inside that lyric line's lrclib time window, so repeated choruses match the right occurrence. A global
-  timing offset is estimated first, which handles music videos with longer intros.
+- `timing.py`: times every lyric word. `plan_alignment` maps lrclib onto the video (`mapping.py`),
+  derives each line's search window, and marks lines cut from the video. `align_lyrics` then takes, per
+  word, the first available of: enhanced-LRC tag (`lrc-tag`), confident forced alignment (`forced`), a
+  DP match with a heard word (`whisper`; pairs only inside the line's window, so repeated choruses match
+  the right occurrence), and packing into the voiced parts of the gap (`lrc-line`/`interpolated`).
+  With `activity` it drops heard words in silence and snaps starts and held-note ends to the voice.
+  Every new argument is optional; without them it is plain whisper matching (`karaokifex-eval --baseline`).
+- `mapping.py`: `video = scale·lrclib + offset`, fitted by deterministic RANSAC over anchors (heard
+  first words of lines), with a cross-correlation prior and piecewise corrections for sections that jumped.
+- `activity.py`: RMS voice activity on the lead stem (numpy), stored as `stems/lead_activity.npz`.
+- `evaluate.py`: the golden-set metric. Its references live in the user's song folders, never in the
+  repo (lyrics are copyrighted); tests use made-up words only.
 - `ass.py`: `\kf` karaoke tags. Durations are differences of rounded absolute times, so the tags always
   sum to the line length. Lines alternate between an upper and a lower slot.
 - `metadata.py`: artist/song from yt-dlp metadata or the video title.
@@ -79,6 +90,17 @@ harmless messages are dropped by `_DropKnownNoise`. `cli.py` sets `TQDM_DISABLE`
   source's codec (Opus).
 - **yt-dlp** needs a JavaScript runtime for YouTube. Node is enabled via `js_runtimes` in `steps/download.py`.
 - **Language.** whisperx language auto-detection (first 30 s) is unreliable on singing (it heard Björk as
-  Welsh); `-l/--language` forces the language.
+  Welsh). `-l/--language` forces the language; otherwise it is detected from the lyrics text (langdetect).
+- **Forced alignment** uses whisperx's own wav2vec2 aligner, one `whisperx.align` call per line on
+  normalised words (characters outside the model's alphabet would become wildcards). CTC places every
+  word inside the window even when it's wrong, so windows are clamped to heard neighbours and the per-word
+  `score` decides trust (`FORCED_LINE_MIN`/`FORCED_WORD_MIN`; calibrate them with karaokifex-eval).
+- **Whisper tweaks.** The lyrics are the `initial_prompt`, set per call via `dataclasses.replace` on
+  `model.options`, so `load_whisper` stays independent of `lyrics`. `suppress_numerals` spells numbers out.
+  Phonetic matching (jellyfish metaphone; it has no double metaphone) applies to English only.
+- **VAD** is RMS thresholding on the clean karaoke stem, not silero/pyannote: deterministic and testable.
+  numpy is therefore imported at CLI startup (via timing → mapping), which is acceptable.
+- **Lyrics candidates.** `lyrics.json` stores up to 3 lrclib versions; `subtitles` aligns each and keeps
+  the best `Alignment.quality`. `load_lyrics` still reads the old single-match format.
 - **Cleanup.** `Workspace.artifacts()` defines what survives cleanup, including karaoke videos from
   earlier runs; everything else in the song folder is temporary.
