@@ -47,7 +47,7 @@ class Activity:
         return len(self.voiced) * self.hop
 
     def _frame(self, t: float) -> int:
-        return min(max(int(t / self.hop), 0), len(self.voiced))
+        return int(min(max(t / self.hop, 0.0), len(self.voiced)))  # clamp before int(): callers pass ±inf
 
     def is_voiced(self, t: float) -> bool:
         frame = self._frame(t)

@@ -41,6 +41,12 @@ def test_queries(activity):
     assert activity.phrase_end(0.5, 3.0) == 0.5
 
 
+def test_unbounded_limits(activity):
+    # An unheard last line has no next line or word, so timing asks up to infinity.
+    assert activity.next_voiced(0.5, float("inf")) == pytest.approx(1.0, abs=0.03)
+    assert activity.voiced_intervals(-float("inf"), float("inf")) == activity.voiced_intervals(0.0, 4.0)
+
+
 def test_onset_envelope_peaks_at_the_phrase_start(activity):
     envelope = activity.onset_envelope()
     assert abs(np.argmax(envelope) * activity.hop - 1.0) < 0.05
