@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to agents when working with code in this repository.
 
 Karaokifex turns a YouTube music video into a karaoke video (lead vocals removed, lyrics burned in with a
 word-by-word highlight). See README.md for user-facing usage, the step table and the installation instructions.
