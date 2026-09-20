@@ -9,6 +9,7 @@ DEFAULT_KARAOKE_MODEL = "mel_band_roformer_karaoke_gabox.ckpt"
 DEFAULT_WHISPER_MODEL = "large-v3"
 DEFAULT_SEPARATION_OVERLAP = 2
 DEFAULT_MODEL_DIR = Path.home() / ".cache" / "karaokifex" / "models"
+DEFAULT_RESOLUTION = 1080
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,7 @@ class Config:
     ffmpeg: str | None = None  # None: pick automatically from PATH
     gpu_jobs: int = 1
     darken: float = 0.08
+    resolution: int = DEFAULT_RESOLUTION
     output_dir: Path = Path(".")
     model_dir: Path = DEFAULT_MODEL_DIR
     mix_vote: bool = False  # also transcribe the full mix and let both transcriptions vote
