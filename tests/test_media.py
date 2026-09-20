@@ -75,6 +75,14 @@ def test_target_bitrate_scales_with_format_efficiency():
     assert media.target_bitrate(SourceInfo("av1", None), "hevc") is None
 
 
+@pytest.mark.parametrize(
+    ("source_height", "target_height", "expected"),
+    [(720, 1080, "scale=-2:1080"), (1080, 1080, None), (2160, 1080, None), (None, 1080, None)],
+)
+def test_scale_filter_only_upsamples_smaller_sources(source_height, target_height, expected):
+    assert media.scale_filter(source_height, target_height) == expected
+
+
 def test_encoder_options():
     gpu = Encoder("hevc", gpu=True).options(13_000_000)
     assert gpu["b:v"] == 13_000_000 and gpu["maxrate"] == 26_000_000 and gpu["preset"] == "p4"

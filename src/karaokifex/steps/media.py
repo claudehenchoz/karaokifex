@@ -88,6 +88,8 @@ class SourceInfo:
     video_format: str | None = None
     video_bitrate: int | None = None
     audio_format: str | None = None
+    video_width: int | None = None
+    video_height: int | None = None
 
 
 class FfmpegError(RuntimeError):
@@ -135,6 +137,11 @@ def target_bitrate(source: SourceInfo, fmt: str) -> int | None:
     return round(source.video_bitrate * BITRATE_FACTOR[fmt] / BITRATE_FACTOR[source.video_format])
 
 
+def scale_filter(source_height: int | None, target_height: int) -> str | None:
+    """Return a proportional upscale filter when the source is below the target height."""
+    return f"scale=-2:{target_height}" if source_height and source_height < target_height else None
+
+
 def audio_encoder(source_format: str | None, tool: FfmpegBinary) -> tuple[str, str]:
     codec, bitrate = AUDIO_ENCODERS.get(source_format or "", AUDIO_ENCODERS["aac"])
     return (codec, bitrate) if codec in tool.software else AUDIO_ENCODERS["aac"]
@@ -152,7 +159,8 @@ def probe_source(video: Path, original: Path | None, *, ffprobe: str = "ffprobe"
     if original is not None and original.exists():
         streams = ffmpeg.probe(str(original), cmd=ffprobe)["streams"]
         audio_format = next((s.get("codec_name") for s in streams if s.get("codec_type") == "audio"), None)
-    return SourceInfo(stream.get("codec_name"), bitrate or None, audio_format)
+    return SourceInfo(stream.get("codec_name"), bitrate or None, audio_format,
+                      stream.get("width"), stream.get("height"))
 
 
 def _ffmpegs_on_path() -> list[str]:
@@ -215,7 +223,9 @@ def extract_video(source: Path, target: Path, *, binary: str = "ffmpeg", duratio
 
 
 def render(video: Path, audio: Path, subtitles: Path, target: Path, *, tool: FfmpegBinary, source: SourceInfo,
-           darken: float, duration: float | None = None, on_progress: ProgressCallback | None = None) -> str:
+           lead: Path | None = None, lead_volume: float = 0.0, darken: float = 0.08,
+           target_height: int = 1080, duration: float | None = None,
+           on_progress: ProgressCallback | None = None) -> str:
     """Darken the video, burn in the subtitles and pair it with the karaoke audio.
 
     Encodes to the source's video format at a comparable bitrate when the hardware allows, and
@@ -231,7 +241,9 @@ def render(video: Path, audio: Path, subtitles: Path, target: Path, *, tool: Ffm
                  format_bitrate(source.video_bitrate), encoder.label, format_bitrate(bitrate), audio_codec)
         try:
             _render(tool.path, encoder, bitrate, (audio_codec, audio_bitrate), video, audio, subtitles, target,
-                    darken=darken, duration=duration, on_progress=on_progress)
+                lead=lead, lead_volume=lead_volume, darken=darken,
+                target_height=target_height, source_height=source.video_height,
+                duration=duration, on_progress=on_progress)
             return f"{encoder.label} at {format_bitrate(bitrate)} + {audio_codec}"
         except FfmpegError as error:
             if index == len(attempts) - 1:
@@ -242,6 +254,7 @@ def render(video: Path, audio: Path, subtitles: Path, target: Path, *, tool: Ffm
 
 def _render(binary: str, encoder: Encoder, bitrate: int | None, audio_encoding: tuple[str, str], video: Path,
             audio: Path, subtitles: Path, target: Path, *, darken: float, duration: float | None,
+            lead: Path | None, lead_volume: float, target_height: int, source_height: int | None,
             on_progress: ProgressCallback | None) -> None:
     # The subtitles filter chokes on Windows drive letters ("C:"), so ffmpeg runs
     # inside the output folder and gets every path relative to it.
@@ -254,12 +267,14 @@ def _render(binary: str, encoder: Encoder, bitrate: int | None, audio_encoding: 
     # With a GPU encoder, decode on the GPU as well (ffmpeg falls back to the CPU if it can't).
     # Frames come back to system memory for the eq and subtitles filters, which only exist on the CPU.
     decode = {"hwaccel": "cuda"} if encoder.gpu else {}
-    picture = (
-        ffmpeg.input(relative(video), **decode).video
-        .filter("eq", brightness=-darken)
-        .filter("subtitles", relative(subtitles))
-    )
+    picture = ffmpeg.input(relative(video), **decode).video
+    if scale_filter(source_height, target_height):
+        picture = picture.filter("scale", -2, target_height)
+    picture = picture.filter("eq", brightness=-darken).filter("subtitles", relative(subtitles))
     sound = ffmpeg.input(relative(audio)).audio
+    if lead is not None and lead_volume:
+        lead_stream = ffmpeg.input(relative(lead)).audio.filter("volume", lead_volume)
+        sound = ffmpeg.filter([sound, lead_stream], "amix", inputs=2, duration="first", dropout_transition=0)
     audio_codec, audio_bitrate = audio_encoding
     stream = ffmpeg.output(
         picture, sound, relative(partial),

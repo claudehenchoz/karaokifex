@@ -19,6 +19,7 @@ from karaokifex.config import (  # noqa: E402
     DEFAULT_KARAOKE_MODEL,
     DEFAULT_MODEL_DIR,
     DEFAULT_SEPARATION_OVERLAP,
+    DEFAULT_RESOLUTION,
     DEFAULT_WHISPER_MODEL,
     Config,
 )
@@ -52,6 +53,10 @@ log = logging.getLogger("karaokifex")
               help="How many GPU-heavy steps may run at the same time.")
 @click.option("--darken", type=click.FloatRange(0, 1), default=0.08, show_default=True,
               help="How much darker the video gets (brightness offset).")
+@click.option("--resolution", type=click.IntRange(min=144), default=DEFAULT_RESOLUTION, show_default=True,
+              help="Minimum output height in pixels; smaller sources are upscaled proportionally.")
+@click.option("--lead-volume", type=click.FloatRange(0, 1), default=0.0, show_default=True,
+              help="Mix the isolated lead vocal back into the karaoke audio (0 = no voice, 1 = full volume).")
 @click.option("-o", "--output-dir", type=click.Path(file_okay=False, path_type=Path), default=Path("."),
               show_default=True, help="Where the per-song folder is created.")
 @click.option("--model-dir", type=click.Path(file_okay=False, path_type=Path), default=DEFAULT_MODEL_DIR,
