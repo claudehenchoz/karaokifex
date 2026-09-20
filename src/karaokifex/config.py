@@ -27,6 +27,7 @@ class Config:
     gpu_jobs: int = 1
     darken: float = 0.08
     resolution: int = DEFAULT_RESOLUTION
+    lead_volume: float = 0.0
     output_dir: Path = Path(".")
     model_dir: Path = DEFAULT_MODEL_DIR
     mix_vote: bool = False  # also transcribe the full mix and let both transcriptions vote

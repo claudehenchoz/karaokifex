@@ -223,7 +223,8 @@ def extract_video(source: Path, target: Path, *, binary: str = "ffmpeg", duratio
 
 
 def render(video: Path, audio: Path, subtitles: Path, target: Path, *, tool: FfmpegBinary, source: SourceInfo,
-           darken: float, target_height: int = 1080, duration: float | None = None,
+           lead: Path | None = None, lead_volume: float = 0.0, darken: float = 0.08,
+           target_height: int = 1080, duration: float | None = None,
            on_progress: ProgressCallback | None = None) -> str:
     """Darken the video, burn in the subtitles and pair it with the karaoke audio.
 
@@ -240,7 +241,8 @@ def render(video: Path, audio: Path, subtitles: Path, target: Path, *, tool: Ffm
                  format_bitrate(source.video_bitrate), encoder.label, format_bitrate(bitrate), audio_codec)
         try:
             _render(tool.path, encoder, bitrate, (audio_codec, audio_bitrate), video, audio, subtitles, target,
-                darken=darken, target_height=target_height, source_height=source.video_height,
+                lead=lead, lead_volume=lead_volume, darken=darken,
+                target_height=target_height, source_height=source.video_height,
                 duration=duration, on_progress=on_progress)
             return f"{encoder.label} at {format_bitrate(bitrate)} + {audio_codec}"
         except FfmpegError as error:
@@ -252,7 +254,8 @@ def render(video: Path, audio: Path, subtitles: Path, target: Path, *, tool: Ffm
 
 def _render(binary: str, encoder: Encoder, bitrate: int | None, audio_encoding: tuple[str, str], video: Path,
             audio: Path, subtitles: Path, target: Path, *, darken: float, duration: float | None,
-            target_height: int, source_height: int | None, on_progress: ProgressCallback | None) -> None:
+            lead: Path | None, lead_volume: float, target_height: int, source_height: int | None,
+            on_progress: ProgressCallback | None) -> None:
     # The subtitles filter chokes on Windows drive letters ("C:"), so ffmpeg runs
     # inside the output folder and gets every path relative to it.
     folder = target.parent
@@ -269,6 +272,9 @@ def _render(binary: str, encoder: Encoder, bitrate: int | None, audio_encoding: 
         picture = picture.filter("scale", -2, target_height)
     picture = picture.filter("eq", brightness=-darken).filter("subtitles", relative(subtitles))
     sound = ffmpeg.input(relative(audio)).audio
+    if lead is not None and lead_volume:
+        lead_stream = ffmpeg.input(relative(lead)).audio.filter("volume", lead_volume)
+        sound = ffmpeg.filter([sound, lead_stream], "amix", inputs=2, duration="first", dropout_transition=0)
     audio_codec, audio_bitrate = audio_encoding
     stream = ffmpeg.output(
         picture, sound, relative(partial),

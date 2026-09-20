@@ -108,11 +108,13 @@ There is a single stem separation pass. The karaoke model's lead-vocal stem doub
 which also keeps backing vocals out of the transcription. The Roformer model runs in half precision
 with an overlap of 2, about 4.6× faster than audio-separator's defaults (fp32, overlap 8) in a benchmark
 on an RTX 3070. `--overlap 8 --fp32` restores those defaults if you want the last bit of quality.
-
+ 
 Rendering decodes and encodes on the GPU (`-hwaccel cuda` + NVENC); only the darkening and subtitle
 filters run on the CPU. The default output height is 1080p: sources below 1080p are upscaled
 proportionally, while larger sources keep their original resolution. Use `--resolution` to choose a
-different minimum output height. The output is an MKV, like the download. The video keeps the source's format when
+different minimum output height. The isolated lead vocal is omitted by default; use `--lead-volume`
+between 0 and 1 to mix it back into the karaoke audio. The output is an MKV, like the download. The
+video keeps the source's format when
 the GPU can encode it; otherwise it uses the most efficient format the GPU can encode. For example, an
 RTX 30xx can't encode AV1, so AV1 sources become HEVC. The bitrate follows the source's, scaled by how
 efficient the output format is, so the file ends up about the size of the original. The audio keeps

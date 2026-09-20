@@ -346,7 +346,8 @@ def _render(job: Job, ctx: TaskContext) -> str:
         source = media.SourceInfo()
     subtitles = ws.debug_subtitles if job.config.debug_ass else ws.subtitles
     encoding = media.render(ws.video, ws.karaoke_backing, subtitles, job.output_video, tool=job.ffmpeg,
-                            source=source, darken=job.config.darken, target_height=job.config.resolution,
+                            source=source, lead=ws.karaoke_lead, lead_volume=job.config.lead_volume,
+                            darken=job.config.darken, target_height=job.config.resolution,
                             duration=job.info.duration,
                             on_progress=ctx.progress)
     size = job.output_video.stat().st_size / 1_048_576

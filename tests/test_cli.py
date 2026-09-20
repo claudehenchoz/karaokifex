@@ -49,6 +49,12 @@ def test_resolution_option_becomes_config(fake_run):
     assert fake_run["config"].resolution == 720
 
 
+def test_lead_volume_option_becomes_config(fake_run):
+    result = CliRunner().invoke(cli.main, [URL, "--lead-volume", "0.35"])
+    assert result.exit_code == 0, result.output
+    assert fake_run["config"].lead_volume == 0.35
+
+
 def test_autodelete_removes_temp_files_without_asking(fake_run):
     result = CliRunner().invoke(cli.main, [URL, "--autodelete"])
     assert result.exit_code == 0, result.output
