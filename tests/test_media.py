@@ -97,6 +97,27 @@ def test_audio_follows_the_source_codec():
     assert media.audio_encoder("opus", FfmpegBinary()) == ("aac", "256k")  # no libopus in this build
 
 
+def test_browser_friendly_encodes_only_h264():
+    assert media.choose_encoder("av1", RTX_3070, formats=("h264",)) == Encoder("h264", gpu=True)
+    assert media.choose_encoder("av1", RTX_3070, gpu=False, formats=("h264",)) == Encoder("h264", gpu=False)
+    assert media.audio_encoder("opus", RTX_3070, browser=True) == ("aac", "256k")
+
+
+@pytest.mark.parametrize(
+    ("source", "ready"),
+    [
+        (SourceInfo("h264", pixel_format="yuv420p", profile="High"), True),
+        (SourceInfo("h264", pixel_format="yuv420p", profile="Constrained Baseline"), True),
+        (SourceInfo("h264", pixel_format="yuv420p10le", profile="High 10"), False),
+        (SourceInfo("h264", pixel_format="yuv444p", profile="High 4:4:4 Predictive"), False),
+        (SourceInfo("vp9", pixel_format="yuv420p", profile="Profile 0"), False),
+        (SourceInfo(), False),
+    ],
+)
+def test_browser_ready_sources(source, ready):
+    assert source.browser_ready is ready
+
+
 def fake_render(monkeypatch, tmp_path, subtitles, source, **options):
     """Runs media.render with ffmpeg replaced; returns its description and the ffmpeg arguments."""
     calls = []
@@ -130,3 +151,31 @@ def test_render_without_subtitles_still_upscales(monkeypatch, tmp_path):
     assert description.startswith("h264_nvenc")
     graph = args[args.index("-filter_complex") + 1]
     assert "scale=-2:1080" in graph and "subtitles" not in graph and "eq=" not in graph
+
+
+H264 = SourceInfo("h264", 4_000_000, "opus", 1920, 1080, "yuv420p", "High")
+
+
+def test_browser_friendly_copies_h264_and_encodes_aac(monkeypatch, tmp_path):
+    description, args = fake_render(monkeypatch, tmp_path, None, H264, browser=True)
+    assert description == "h264 copied + aac"
+    assert args[args.index("-vcodec") + 1] == "copy"
+    assert args[args.index("-acodec") + 1] == "aac"
+    assert args[args.index("-movflags") + 1] == "+faststart"
+
+
+def test_browser_friendly_encodes_other_formats_to_h264(monkeypatch, tmp_path):
+    source = SourceInfo("av1", 2_000_000, "opus", 1920, 1080, "yuv420p", "Main")
+    description, args = fake_render(monkeypatch, tmp_path, None, source, browser=True)
+    assert description.startswith("h264_nvenc (GPU) at 3.6 Mbit/s + aac")
+    assert args[args.index("-profile:v") + 1] == "high" and args[args.index("-pix_fmt") + 1] == "yuv420p"
+    assert args[args.index("-movflags") + 1] == "+faststart"
+
+
+@pytest.mark.parametrize("subtitles, height", [("lyrics.ass", 1080), (None, 720)])
+def test_browser_friendly_encodes_when_the_picture_changes(monkeypatch, tmp_path, subtitles, height):
+    source = SourceInfo("h264", 4_000_000, "opus", 1280, height, "yuv420p", "High")
+    subtitles = subtitles and tmp_path / subtitles
+    description, args = fake_render(monkeypatch, tmp_path, subtitles, source, browser=True)
+    assert description.startswith("h264_nvenc")
+    assert "-filter_complex" in args

@@ -29,6 +29,7 @@ class Config:
     darken: float = 0.08
     resolution: int = DEFAULT_RESOLUTION
     lead_volume: float = 0.0
+    browser_friendly: bool = False  # MP4 with H.264 + AAC; the video is copied when it already is H.264
     output_dir: Path = Path(".")
     model_dir: Path = DEFAULT_MODEL_DIR
     mix_vote: bool = False  # also transcribe the full mix and let both transcriptions vote

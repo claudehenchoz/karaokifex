@@ -58,6 +58,13 @@ def test_without_burned_in_lyrics_the_render_does_not_wait_for_them(job):
     assert tasks["render"].outputs == (job.workspace.plain_video,)
 
 
+def test_browser_friendly_renders_an_mp4(job):
+    job = replace(job, config=replace(job.config, browser_friendly=True))
+    assert tasks_of(job)["render"].outputs == (job.workspace.final_video.with_suffix(".mp4"),)
+    job = replace(job, config=replace(job.config, burn_lyrics=False))
+    assert job.output_video.name == "Artist - Song (Karaoke, no lyrics).mp4"
+
+
 def test_palette_step_writes_the_dominant_colours(job, monkeypatch):
     job = replace(job, config=replace(job.config, palette=True))
     assert tasks_of(job)["palette"].deps == ("extract_video",)

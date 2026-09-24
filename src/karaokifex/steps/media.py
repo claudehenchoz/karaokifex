@@ -30,6 +30,8 @@ CPU_ENCODERS = {"av1": "libsvtav1", "hevc": "libx265", "h264": "libx264"}
 BITRATE_FACTOR = {"av1": 1.0, "vp9": 1.3, "hevc": 1.3, "h264": 1.8}
 # Audio encoder and bitrate per source audio codec; anything else becomes AAC.
 AUDIO_ENCODERS = {"opus": ("libopus", "160k"), "aac": ("aac", "256k")}
+# H.264 that every browser's <video> plays (with AAC audio, in an MP4): 8-bit 4:2:0 in one of these profiles.
+BROWSER_PROFILES = frozenset({"Constrained Baseline", "Baseline", "Main", "High"})
 
 _SOFTWARE_ENCODERS = frozenset({*CPU_ENCODERS.values(), "libopus", "aac"})
 # Below-normal priority keeps the desktop responsive while ffmpeg crunches.
@@ -94,6 +96,13 @@ class SourceInfo:
     audio_format: str | None = None
     video_width: int | None = None
     video_height: int | None = None
+    pixel_format: str | None = None
+    profile: str | None = None
+
+    @property
+    def browser_ready(self) -> bool:
+        """Whether every browser plays this video stream as it is (--browser-friendly copies it then)."""
+        return self.video_format == "h264" and self.pixel_format == "yuv420p" and self.profile in BROWSER_PROFILES
 
 
 class FfmpegError(RuntimeError):
@@ -121,9 +130,13 @@ def find_ffmpeg(explicit: str | None = None) -> FfmpegBinary:
     return FfmpegBinary(usable[0], frozenset(), _software_encoders(usable[0]))
 
 
-def choose_encoder(source_format: str | None, tool: FfmpegBinary, *, gpu: bool = True) -> Encoder:
-    """The source's own format if possible, else the most efficient one; the GPU beats the CPU."""
-    order = sorted(FORMATS, key=lambda f: f != source_format)  # stable sort: source format first
+def choose_encoder(source_format: str | None, tool: FfmpegBinary, *, gpu: bool = True,
+                   formats: tuple[str, ...] = FORMATS) -> Encoder:
+    """The source's own format if possible, else the most efficient one; the GPU beats the CPU.
+
+    `formats` limits the choice, most efficient first (--browser-friendly allows only H.264).
+    """
+    order = sorted(formats, key=lambda f: f != source_format)  # stable sort: source format first
     if gpu:
         for fmt in order:
             if fmt in tool.gpu_formats:
@@ -146,9 +159,10 @@ def scale_filter(source_height: int | None, target_height: int) -> str | None:
     return f"scale=-2:{target_height}" if source_height and source_height < target_height else None
 
 
-def audio_encoder(source_format: str | None, tool: FfmpegBinary) -> tuple[str, str]:
+def audio_encoder(source_format: str | None, tool: FfmpegBinary, *, browser: bool = False) -> tuple[str, str]:
+    """The source's audio codec if this ffmpeg can encode it, else AAC; always AAC for browsers."""
     codec, bitrate = AUDIO_ENCODERS.get(source_format or "", AUDIO_ENCODERS["aac"])
-    return (codec, bitrate) if codec in tool.software else AUDIO_ENCODERS["aac"]
+    return (codec, bitrate) if codec in tool.software and not browser else AUDIO_ENCODERS["aac"]
 
 
 def probe_source(video: Path, original: Path | None, *, ffprobe: str = "ffprobe") -> SourceInfo:
@@ -164,7 +178,7 @@ def probe_source(video: Path, original: Path | None, *, ffprobe: str = "ffprobe"
         streams = ffmpeg.probe(str(original), cmd=ffprobe)["streams"]
         audio_format = next((s.get("codec_name") for s in streams if s.get("codec_type") == "audio"), None)
     return SourceInfo(stream.get("codec_name"), bitrate or None, audio_format,
-                      stream.get("width"), stream.get("height"))
+                      stream.get("width"), stream.get("height"), stream.get("pix_fmt"), stream.get("profile"))
 
 
 def _ffmpegs_on_path() -> list[str]:
@@ -257,24 +271,29 @@ def sample_frames(video: Path, *, binary: str = "ffmpeg", ffprobe: str = "ffprob
 
 def render(video: Path, audio: Path, subtitles: Path | None, target: Path, *, tool: FfmpegBinary,
            source: SourceInfo, lead: Path | None = None, lead_volume: float = 0.0, darken: float = 0.08,
-           target_height: int = 1080, duration: float | None = None,
+           target_height: int = 1080, browser: bool = False, duration: float | None = None,
            on_progress: ProgressCallback | None = None) -> str:
     """Darken the video, burn in the subtitles and pair it with the karaoke audio.
 
     Encodes to the source's video format at a comparable bitrate when the hardware allows, and
     falls back to the CPU if the GPU encoder fails. Without subtitles the picture is left as it
-    is: the video stream is copied, unless it must be upscaled. Returns a description of the encoding.
+    is: the video stream is copied, unless it must be upscaled. `browser` makes an MP4 every
+    browser plays: H.264 High (copied when the source already is such H.264), AAC, fast start.
+    Returns a description of the encoding.
     """
-    audio_codec, audio_bitrate = audio_encoder(source.audio_format, tool)
+    audio_codec, audio_bitrate = audio_encoder(source.audio_format, tool, browser=browser)
     options: dict[str, Any] = dict(lead=lead, lead_volume=lead_volume, darken=darken, target_height=target_height,
-                                   source_height=source.video_height, duration=duration, on_progress=on_progress)
-    if subtitles is None and not scale_filter(source.video_height, target_height):
+                                   source_height=source.video_height, browser=browser, duration=duration,
+                                   on_progress=on_progress)
+    untouched = subtitles is None and not scale_filter(source.video_height, target_height)
+    if untouched and (source.browser_ready or not browser):
         log.info("source %s copied as it is, audio %s", source.video_format or "video", audio_codec)
         _render(tool.path, None, None, (audio_codec, audio_bitrate), video, audio, None, target, **options)
         return f"{source.video_format or 'video'} copied + {audio_codec}"
-    attempts = [choose_encoder(source.video_format, tool)]
+    formats = ("h264",) if browser else FORMATS
+    attempts = [choose_encoder(source.video_format, tool, formats=formats)]
     if attempts[0].gpu:
-        attempts.append(choose_encoder(source.video_format, tool, gpu=False))
+        attempts.append(choose_encoder(source.video_format, tool, gpu=False, formats=formats))
     for index, encoder in enumerate(attempts):
         bitrate = target_bitrate(source, encoder.format)
         log.info("source %s at %s → %s at %s, audio %s", source.video_format or "unknown",
@@ -293,7 +312,7 @@ def render(video: Path, audio: Path, subtitles: Path | None, target: Path, *, to
 def _render(binary: str, encoder: Encoder | None, bitrate: int | None, audio_encoding: tuple[str, str],
             video: Path, audio: Path, subtitles: Path | None, target: Path, *, darken: float,
             duration: float | None, lead: Path | None, lead_volume: float, target_height: int,
-            source_height: int | None, on_progress: ProgressCallback | None) -> None:
+            source_height: int | None, browser: bool, on_progress: ProgressCallback | None) -> None:
     """One ffmpeg run. `encoder` None copies the video stream (no filters then); `subtitles` None burns in nothing."""
     # The subtitles filter chokes on Windows drive letters ("C:"), so ffmpeg runs
     # inside the output folder and gets every path relative to it.
@@ -315,6 +334,10 @@ def _render(binary: str, encoder: Encoder | None, bitrate: int | None, audio_enc
         if subtitles is not None:
             picture = picture.filter("eq", brightness=-darken).filter("subtitles", relative(subtitles))
         video_options = {"vcodec": encoder.codec, "pix_fmt": "yuv420p", **encoder.options(bitrate)}
+        if browser:
+            video_options["profile:v"] = "high"
+    if browser:
+        video_options["movflags"] = "+faststart"  # the index goes first, so playback starts while loading
     sound = ffmpeg.input(relative(audio)).audio
     if lead is not None and lead_volume:
         lead_stream = ffmpeg.input(relative(lead)).audio.filter("volume", lead_volume)

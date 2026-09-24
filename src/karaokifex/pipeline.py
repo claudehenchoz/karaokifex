@@ -75,8 +75,10 @@ class Job:
     @property
     def output_video(self) -> Path:
         if not self.config.burn_lyrics:
-            return self.workspace.plain_video
-        return self.workspace.debug_video if self.config.debug_ass else self.workspace.final_video
+            video = self.workspace.plain_video
+        else:
+            video = self.workspace.debug_video if self.config.debug_ass else self.workspace.final_video
+        return video.with_suffix(".mp4") if self.config.browser_friendly else video
 
 
 @dataclass(frozen=True)
@@ -113,7 +115,8 @@ def build_tasks(job: Job) -> list[Task]:
     transcripts = (ws.transcript_json, ws.transcript_mix_json) if cfg.mix_vote else (ws.transcript_json,)
     tasks = [
         Task("lyrics", partial(_lyrics, job), outputs=(ws.lyrics_json,), description="lrclib lookup"),
-        Task("download", partial(_download, job), outputs=(ws.source,), description="yt-dlp: best video + audio"),
+        Task("download", partial(_download, job), outputs=(ws.source,),
+             description="yt-dlp: best video" + (" (H.264 if as good)" if cfg.browser_friendly else "") + " + audio"),
         Task("load_whisper", partial(_load_whisper, job), outputs=transcripts,
              description=f"whisperx {cfg.whisper_model}"),
         Task("extract_audio", partial(_extract_audio, job), deps=("download",), outputs=(ws.audio,),
@@ -188,7 +191,7 @@ def _download(job: Job, ctx: TaskContext) -> None:
         ctx.progress(fraction)
         ctx.note(note)
 
-    download.download(job.config.url, job.workspace.source, on_progress)
+    download.download(job.config.url, job.workspace.source, on_progress, prefer_h264=job.config.browser_friendly)
     log.info("downloaded %s (%.0f MiB)", job.workspace.source.name, job.workspace.source.stat().st_size / 1_048_576)
 
 
@@ -378,7 +381,7 @@ def _render(job: Job, ctx: TaskContext) -> str:
     encoding = media.render(ws.video, ws.karaoke_backing, subtitles, job.output_video, tool=job.ffmpeg,
                             source=source, lead=ws.karaoke_lead, lead_volume=job.config.lead_volume,
                             darken=job.config.darken, target_height=job.config.resolution,
-                            duration=job.info.duration,
+                            browser=job.config.browser_friendly, duration=job.info.duration,
                             on_progress=ctx.progress)
     size = job.output_video.stat().st_size / 1_048_576
     log.info("rendered %s (%.0f MiB) with %s", job.output_video.name, size, encoding)

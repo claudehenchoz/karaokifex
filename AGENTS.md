@@ -92,6 +92,10 @@ harmless messages are dropped by `_DropKnownNoise`. `cli.py` sets `TQDM_DISABLE`
   become HEVC). The bitrate is the source's, scaled by `BITRATE_FACTOR`, and the audio keeps the
   source's codec (Opus). With `--no-burn-lyrics` nothing touches the picture (no eq, no subtitles), so
   the video stream is copied unless `--resolution` forces an upscale; the lyrics files are still written.
+- **Browser-friendly** (`--browser-friendly`): MP4 with `+faststart`, H.264 High yuv420p (the only
+  format `choose_encoder` may pick then) and AAC. `SourceInfo.browser_ready` decides whether an untouched
+  picture can be copied. The download sorts `res,fps,vcodec:h264`, so H.264 wins only when it costs no
+  resolution or frame rate; YouTube's H.264 stops at 1080p, so bigger sources get encoded.
 - **yt-dlp** needs a JavaScript runtime for YouTube. Node is enabled via `js_runtimes` in `steps/download.py`.
 - **Language.** whisperx language auto-detection (first 30 s) is unreliable on singing (it heard Björk as
   Welsh). `-l/--language` forces the language; otherwise it is detected from the lyrics text (langdetect).

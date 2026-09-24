@@ -48,7 +48,7 @@ uv run karaokifex "https://www.youtube.com/watch?v=..."
 
 | Step               | Tool                                                            | Output                                      |
 |--------------------|-----------------------------------------------------------------|---------------------------------------------|
-| `download`         | yt-dlp, best video + best audio                                 | `source.mkv`                                |
+| `download`         | yt-dlp, best video + best audio (`--browser-friendly`: H.264 if as good) | `source.mkv`                       |
 | `extract_audio`    | ffmpeg                                                          | `audio.wav`                                 |
 | `extract_video`    | ffmpeg (stream copy)                                            | `video.mkv`                                 |
 | `palette`          | only with `--palette`: the video's dominant colours (k-means over 32 sampled frames) | `metadata.json`        |
@@ -60,7 +60,7 @@ uv run karaokifex "https://www.youtube.com/watch?v=..."
 | `transcribe_mix`   | only with `--mix-vote`: whisperx on the full mix                | `transcript_mix.json`                       |
 | `force_align`      | lrclib → video time map, then wav2vec2 forced alignment of each lyric line | `forced.json`                    |
 | `subtitles`        | best timing source per word, snapped to the voice → karaoke ASS (`\kf` tags) | `lyrics.ass`, `lyrics.debug.ass`, `timings.json` |
-| `render`           | ffmpeg: darken, burn in subtitles, karaoke audio (GPU decode + NVENC) | `<Artist - Song> (Karaoke).mkv`       |
+| `render`           | ffmpeg: darken, burn in subtitles, karaoke audio (GPU decode + NVENC) | `<Artist - Song> (Karaoke).mkv` (or `.mp4`) |
 
 Each step starts as soon as its inputs exist, so the lyrics lookup, the download, and the whisperx model
 load all run at the same time. GPU-heavy steps take turns (`--gpu-jobs` raises that limit). A live task
@@ -123,6 +123,13 @@ without re-encoding, unless the source is below `--resolution` and must be upsca
 `<Artist - Song> (Karaoke, no lyrics).mkv`, and the lyrics are still written to `lyrics.ass` and
 `timings.json` (every word with its start and end), for a player that shows them itself.
 
+`--browser-friendly` writes an MP4 that every browser's `<video>` plays: H.264 (High profile, 8-bit
+4:2:0), AAC audio, and the index at the front of the file ("fast start"), so playback begins while it
+loads. The download then prefers H.264 whenever YouTube offers it at the best resolution and frame rate,
+so with `--no-burn-lyrics` the video is usually copied and only the audio is encoded: a render takes
+seconds. Burned-in lyrics, other formats (VP9, AV1) and upscaling mean an H.264 encode. A lower
+`--resolution` keeps small sources from being upscaled, and so from being re-encoded.
+
 `--palette` finds the video's five dominant colours and writes them to `metadata.json`, most common
 first, each with its share of the picture (black letterbox and pillarbox bars don't count):
 
@@ -133,11 +140,11 @@ first, each with its share of the picture (black letterbox and pillarbox bars do
 The colours come from k-means over 32 small frames spread across the video, one fast seek each, so the
 step takes seconds and runs while the stems are separated.
 
-The output is an MKV, like the download. The video keeps the source's format when the GPU can encode
-it; otherwise it uses the most efficient format the GPU can encode. For example, an RTX 30xx can't encode
-AV1, so AV1 sources become HEVC. The bitrate follows the source's, scaled by how efficient the output
-format is, so the file ends up about the size of the original. The audio keeps the source's codec
-(usually Opus). PATH often holds several ffmpeg builds (ImageMagick ships an old one),
+Without `--browser-friendly`, the output is an MKV, like the download. The video keeps the source's
+format when the GPU can encode it; otherwise it uses the most efficient format the GPU can encode. For
+example, an RTX 30xx can't encode AV1, so AV1 sources become HEVC. The bitrate follows the source's,
+scaled by how efficient the output format is, so the file ends up about the size of the original. The
+audio keeps the source's codec (usually Opus). PATH often holds several ffmpeg builds (ImageMagick ships an old one),
 so karaokifex test-drives each one and uses the first that has libass and can encode with NVENC. If none
 can, it falls back to x264 on the CPU at below-normal priority. Use `--ffmpeg` or `KARAOKIFEX_FFMPEG` to
 pick a specific one.
