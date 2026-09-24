@@ -3,6 +3,7 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
+import requests
 
 from karaokifex import pipeline
 from karaokifex.config import Config
@@ -88,6 +89,44 @@ def test_palette_step_writes_the_dominant_colours(job, monkeypatch):
 class Ctx:
     def note(self, text):
         pass
+
+
+class FakeResponse:
+    status_code = 200
+
+    def __init__(self, recordings):
+        self._recordings = recordings
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {"recordings": self._recordings}
+
+
+PUMPKINS = [{"title": "Mayonaise", "artist-credit": [{"name": "Smashing Pumpkins", "joinphrase": "",
+                                                      "artist": {"name": "The Smashing Pumpkins"}}]}]
+
+
+def test_canonical_names_come_from_musicbrainz(monkeypatch):
+    monkeypatch.setattr(pipeline.musicbrainz, "MIN_INTERVAL", 0.0)
+    info = VideoInfo(id="x", title='Smashing Pumpkins "Mayonaise"', uploader="ag4321")
+    guess = ("Smashing Pumpkins", "Mayonaise")
+    get = lambda url, **options: FakeResponse(PUMPKINS)  # noqa: E731
+    assert pipeline.canonical_names(info, None, None, guess, get=get) == ("The Smashing Pumpkins", "Mayonaise")
+    assert pipeline.canonical_names(info, None, "mayonaise", guess, get=get) == ("The Smashing Pumpkins", "mayonaise")
+    assert pipeline.canonical_names(info, None, None, guess, get=lambda url, **o: FakeResponse([])) == guess
+
+
+def test_canonical_names_fall_back_when_offline(monkeypatch):
+    monkeypatch.setattr(pipeline.musicbrainz, "MIN_INTERVAL", 0.0)
+
+    def offline(url, **options):
+        raise requests.ConnectionError("no network")
+
+    info = VideoInfo(id="x", title="Culture Beat - Mr. Vain")
+    assert pipeline.canonical_names(info, None, None, ("Culture Beat", "Mr. Vain"), get=offline) == \
+        ("Culture Beat", "Mr. Vain")
 
 
 WORDS = [TimedWord("hello", 5.0, 5.4), TimedWord("world", 5.5, 6.0), TimedWord("again", 8.0, 8.6)]

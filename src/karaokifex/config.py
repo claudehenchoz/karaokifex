@@ -18,6 +18,7 @@ class Config:
     artist: str | None = None
     song: str | None = None
     language: str | None = None
+    musicbrainz: bool = True  # canonical artist and song names from MusicBrainz
     karaoke_model: str = DEFAULT_KARAOKE_MODEL
     whisper_model: str = DEFAULT_WHISPER_MODEL
     separation_overlap: int = DEFAULT_SEPARATION_OVERLAP

@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import ffmpeg
+import requests
 from rich.live import Live
 
 from karaokifex.activity import Activity
@@ -35,11 +36,11 @@ from karaokifex.ass import build_ass
 from karaokifex.config import Config
 from karaokifex.console import TaskBoard, console, register_tasks
 from karaokifex.gpu import free_gpu_memory
-from karaokifex.metadata import guess_artist_song
+from karaokifex.metadata import guess_artist_song, name_guesses, title_segments
 from karaokifex.models import Lyrics, TimedWord, VideoInfo
 from karaokifex.palette import dominant_colors, without_bars
 from karaokifex.runner import RunReport, Task, TaskContext, TaskRunner, current_task
-from karaokifex.steps import download, lyrics, media, separation, transcription
+from karaokifex.steps import download, lyrics, media, musicbrainz, separation, transcription
 from karaokifex.timing import (
     Alignment,
     AlignmentPlan,
@@ -106,6 +107,8 @@ def prepare(config: Config) -> Job:
         log.info("looking up %s", config.url)
         info = download.probe(config.url)
         artist, song = guess_artist_song(info, config.artist, config.song)
+        if config.musicbrainz and not (config.artist and config.song):
+            artist, song = canonical_names(info, config.artist, config.song, (artist, song))
         workspace = Workspace.create(config.output_dir, f"{artist} - {song}")
         workspace.info_json.write_text(json.dumps(info.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
         device = config.resolve_device()
@@ -116,6 +119,26 @@ def prepare(config: Config) -> Job:
         return Job(config, workspace, info, artist, song, device, ffmpeg)
     finally:
         current_task.reset(token)
+
+
+def canonical_names(info: VideoInfo, artist: str | None, song: str | None, guess: tuple[str, str],
+                    *, get: musicbrainz.HttpGet = requests.get) -> tuple[str, str]:
+    """Artist and song as MusicBrainz spells them, if it confirms them; otherwise `guess`. Given names win."""
+    segments = title_segments(info.title)
+    # A title that doesn't split into parts may still hold both names ('Smashing Pumpkins Mayonaise').
+    text = segments[0] if len(segments) == 1 and not (artist or song or info.artist) else None
+    try:
+        match = musicbrainz.lookup(name_guesses(info, artist, song), text, get=get)
+    except (requests.RequestException, ValueError) as error:
+        log.warning("MusicBrainz lookup failed (%s) — keeping “%s – %s”", error, *guess)
+        return guess
+    if match is None:
+        log.info("MusicBrainz isn't sure about this one — keeping “%s – %s”", *guess)
+        return guess
+    names = (artist or match.artist, song or match.song)
+    log.info("MusicBrainz: “%s – %s” (%d matching recordings%s)", *names, match.recordings,
+             "" if names == guess else f"; the video's own guess was “{guess[0]} – {guess[1]}”")
+    return names
 
 
 def build_tasks(job: Job) -> list[Task]:

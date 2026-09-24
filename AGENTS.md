@@ -42,9 +42,9 @@ a GPU object must use `ctx.take("task")` rather than `ctx.result(...)`, and then
 (`gpu.free_gpu_memory()`); see `_transcribe` in pipeline.py.
 
 **Module roles.** `steps/` wraps one external tool per module (yt-dlp, ffmpeg, audio-separator, lrclib,
-whisperx). Heavy imports (torch, whisperx, audio_separator) happen *inside* functions. Keep it that
-way: CLI startup stays fast, and the tests never import them (test_transcription.py injects a fake
-`whisperx` module). The pure logic, where the tests concentrate, lives in:
+MusicBrainz, whisperx). Heavy imports (torch, whisperx, audio_separator) happen *inside* functions. Keep
+it that way: CLI startup stays fast, and the tests never import them (test_transcription.py injects a
+fake `whisperx` module). The pure logic, where the tests concentrate, lives in:
 - `timing.py`: times every lyric word. `plan_alignment` maps lrclib onto the video (`mapping.py`),
   derives each line's search window, and marks lines cut from the video. `align_lyrics` then takes, per
   word, the first available of: enhanced-LRC tag (`lrc-tag`), confident forced alignment (`forced`), a
@@ -59,7 +59,8 @@ way: CLI startup stays fast, and the tests never import them (test_transcription
   repo (lyrics are copyrighted); tests use made-up words only.
 - `ass.py`: `\kf` karaoke tags. Durations are differences of rounded absolute times, so the tags always
   sum to the line length. Lines alternate between an upper and a lower slot.
-- `metadata.py`: artist/song from yt-dlp metadata or the video title.
+- `metadata.py`: artist/song from yt-dlp metadata or the video title, plus the (artist, song) guesses
+  (`name_guesses`: every ordered pair of title parts) that `steps/musicbrainz.py` checks.
 - `palette.py`: `--palette`, deterministic k-means (fixed-seed k-means++) over frames that
   `media.sample_frames` grabs with one fast seek each (dav1d ignores `-skip_frame nokey`, so decoding
   only keyframes doesn't work); black bars are cropped first. Written to `metadata.json`.
@@ -108,6 +109,13 @@ harmless messages are dropped by `_DropKnownNoise`. `cli.py` sets `TQDM_DISABLE`
   Phonetic matching (jellyfish metaphone; it has no double metaphone) applies to English only.
 - **VAD** is RMS thresholding on the clean karaoke stem, not silero/pyannote: deterministic and testable.
   numpy is therefore imported at CLI startup (via timing → mapping), which is acceptable.
+- **Names.** `prepare()` asks MusicBrainz (one recording search, all guesses OR-ed as phrase pairs, at
+  most 1 request/s with a contact in the User-Agent) before the folder is named. Only recordings whose
+  artist and title both match a guess count (`normalize_name`: case, accents, punctuation, a leading
+  "The", "&"/"and"); no confirmation keeps the heuristic guess, so offline runs still work. The artist
+  is the credited name (in the artist entry's spelling when only that differs), typographic
+  punctuation becomes plain. A lookup that changes its mind names a different folder, so a re-run
+  that must resume should pass `-a`/`-s`.
 - **Lyrics candidates.** `lyrics.json` stores up to 3 lrclib versions; `subtitles` aligns each and keeps
   the best `Alignment.quality`. `load_lyrics` still reads the old single-match format.
 - **Cleanup.** `Workspace.artifacts()` defines what survives cleanup, including karaoke videos from

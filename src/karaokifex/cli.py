@@ -34,6 +34,9 @@ log = logging.getLogger("karaokifex")
 @click.argument("url")
 @click.option("-a", "--artist", help="Artist name. Default: taken from the video metadata or title.")
 @click.option("-s", "--song", help="Song name. Default: taken from the video metadata or title.")
+@click.option("--musicbrainz/--no-musicbrainz", default=True, show_default=True,
+              help="Look the song up on MusicBrainz and use its artist and song names when it is sure; "
+                   "names given with --artist/--song win.")
 @click.option("-l", "--language",
               help="Language code, e.g. 'en'. Default: detected from the lyrics, else from the singing.")
 @click.option("--karaoke-model", default=DEFAULT_KARAOKE_MODEL, show_default=True,

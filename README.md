@@ -7,7 +7,13 @@ picture is slightly darkened, and the lyrics are burned in with a word-by-word h
 karaokifex "https://www.youtube.com/watch?v=..." --artist "Artist" --song "Song"
 ```
 
-Artist and song are optional. If you leave them out, they are taken from the video's metadata or title.
+Artist and song are optional. If you leave them out, they are taken from the video's metadata or title
+and checked against [MusicBrainz](https://musicbrainz.org), which also settles their spelling. Titles like
+`Say Anything • In Your Eyes • Peter Gabriel` or `Smashing Pumpkins "Mayonaise"` work too: every part of
+the title is tried as artist and as song, and the pair that MusicBrainz recordings confirm wins. When
+MusicBrainz isn't sure (or can't be reached), the names from the video are used as they are.
+`--no-musicbrainz` skips the lookup; names given with `--artist`/`--song` always win. The song folder and
+every file in it are named `Artist - Song` after the result.
 
 ## Installation
 
@@ -168,9 +174,10 @@ src/karaokifex/
   activity.py     when the lead vocals are audible (pure)
   ass.py          timed lines → karaoke ASS (pure)
   evaluate.py     karaokifex-eval: timing accuracy against a reference
-  metadata.py     artist/song from video metadata (pure)
+  metadata.py     artist/song guesses from video metadata (pure)
   palette.py      dominant colours of the video (pure)
-  steps/          one module per external tool: download, media, separation, lyrics, transcription
+  steps/          one module per external tool: download, media, separation, lyrics, transcription,
+                  musicbrainz
 ```
 
 ## Development

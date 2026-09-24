@@ -69,6 +69,14 @@ def test_browser_friendly_option_becomes_config(fake_run):
     assert fake_run["config"].browser_friendly is True
 
 
+def test_musicbrainz_is_on_unless_switched_off(fake_run):
+    assert CliRunner().invoke(cli.main, [URL]).exit_code == 0
+    assert fake_run["config"].musicbrainz is True
+    result = CliRunner().invoke(cli.main, [URL, "--no-musicbrainz"])
+    assert result.exit_code == 0, result.output
+    assert fake_run["config"].musicbrainz is False
+
+
 def test_palette_option_becomes_config(fake_run):
     result = CliRunner().invoke(cli.main, [URL, "--palette"])
     assert result.exit_code == 0, result.output
