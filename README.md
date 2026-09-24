@@ -51,6 +51,7 @@ uv run karaokifex "https://www.youtube.com/watch?v=..."
 | `download`         | yt-dlp, best video + best audio (`--browser-friendly`: H.264 if as good) | `source.mkv`                       |
 | `extract_audio`    | ffmpeg                                                          | `audio.wav`                                 |
 | `extract_video`    | ffmpeg (stream copy)                                            | `video.mkv`                                 |
+| `original`         | only with `--keep-source`: the video with its own sound, made like the karaoke video | `<Artist - Song> (Original).mkv` |
 | `palette`          | only with `--palette`: the video's dominant colours (k-means over 32 sampled frames) | `metadata.json`        |
 | `separate_karaoke` | audio-separator, `mel_band_roformer_karaoke_gabox.ckpt`         | `stems/karaoke_backing.wav`, `stems/karaoke_lead.wav` |
 | `lyrics`           | lrclib.net, up to 3 versions (the one that fits the audio wins) | `lyrics.json`                               |
@@ -71,8 +72,10 @@ If you re-run the same command, any step whose output already exists is skipped,
 up where it stopped (`--force` redoes everything). After a successful run, karaokifex deletes the
 temporary files. It keeps the video, the ASS file, the karaoke audio track, the lyrics with their word
 timings (`timings.json`), and the video's metadata (`info.json`, `metadata.json`). `--keep-source` also
-keeps the original download (`source.mkv`), so a later run with other settings starts from it instead of
-downloading again. `--keep-temp` keeps every file.
+keeps the original: the video with its own sound (vocals and all), as `<Artist - Song> (Original).mkv`.
+It is made like the karaoke video, in the same format and resolution (an MP4 with `--browser-friendly`),
+and its audio is copied when that format takes it. The raw download (`source.mkv`) is still deleted;
+`--keep-temp` keeps every file.
 
 ### How the words get their timing
 

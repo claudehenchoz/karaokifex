@@ -179,3 +179,19 @@ def test_browser_friendly_encodes_when_the_picture_changes(monkeypatch, tmp_path
     description, args = fake_render(monkeypatch, tmp_path, subtitles, source, browser=True)
     assert description.startswith("h264_nvenc")
     assert "-filter_complex" in args
+
+
+def test_the_original_keeps_its_own_audio(monkeypatch, tmp_path):
+    source = SourceInfo("vp9", 2_000_000, "opus", 1920, 1080, "yuv420p", "Profile 0")
+    description, args = fake_render(monkeypatch, tmp_path, None, source, copy_audio=True)
+    assert description == "vp9 copied + opus copied"
+    assert args[args.index("-acodec") + 1] == "copy" and "-b:a" not in args
+
+
+def test_the_original_for_browsers_gets_aac(monkeypatch, tmp_path):
+    source = SourceInfo("h264", 4_000_000, "opus", 1920, 1080, "yuv420p", "High")
+    description, args = fake_render(monkeypatch, tmp_path, None, source, copy_audio=True, browser=True)
+    assert description == "h264 copied + aac"
+    source = SourceInfo("h264", 4_000_000, "aac", 1920, 1080, "yuv420p", "High")
+    description, args = fake_render(monkeypatch, tmp_path, None, source, copy_audio=True, browser=True)
+    assert description == "h264 copied + aac copied"

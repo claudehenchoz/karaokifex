@@ -271,25 +271,30 @@ def sample_frames(video: Path, *, binary: str = "ffmpeg", ffprobe: str = "ffprob
 
 def render(video: Path, audio: Path, subtitles: Path | None, target: Path, *, tool: FfmpegBinary,
            source: SourceInfo, lead: Path | None = None, lead_volume: float = 0.0, darken: float = 0.08,
-           target_height: int = 1080, browser: bool = False, duration: float | None = None,
-           on_progress: ProgressCallback | None = None) -> str:
+           target_height: int = 1080, browser: bool = False, copy_audio: bool = False,
+           duration: float | None = None, on_progress: ProgressCallback | None = None) -> str:
     """Darken the video, burn in the subtitles and pair it with the karaoke audio.
 
     Encodes to the source's video format at a comparable bitrate when the hardware allows, and
     falls back to the CPU if the GPU encoder fails. Without subtitles the picture is left as it
     is: the video stream is copied, unless it must be upscaled. `browser` makes an MP4 every
     browser plays: H.264 High (copied when the source already is such H.264), AAC, fast start.
+    `copy_audio` passes `audio` (the source's own track) through when the output takes its codec.
     Returns a description of the encoding.
     """
-    audio_codec, audio_bitrate = audio_encoder(source.audio_format, tool, browser=browser)
+    if copy_audio and (not browser or source.audio_format == "aac"):
+        audio_codec, audio_bitrate = "copy", None
+    else:
+        audio_codec, audio_bitrate = audio_encoder(source.audio_format, tool, browser=browser)
+    sound = f"{source.audio_format or 'audio'} copied" if audio_codec == "copy" else audio_codec
     options: dict[str, Any] = dict(lead=lead, lead_volume=lead_volume, darken=darken, target_height=target_height,
                                    source_height=source.video_height, browser=browser, duration=duration,
                                    on_progress=on_progress)
     untouched = subtitles is None and not scale_filter(source.video_height, target_height)
     if untouched and (source.browser_ready or not browser):
-        log.info("source %s copied as it is, audio %s", source.video_format or "video", audio_codec)
+        log.info("source %s copied as it is, audio %s", source.video_format or "video", sound)
         _render(tool.path, None, None, (audio_codec, audio_bitrate), video, audio, None, target, **options)
-        return f"{source.video_format or 'video'} copied + {audio_codec}"
+        return f"{source.video_format or 'video'} copied + {sound}"
     formats = ("h264",) if browser else FORMATS
     attempts = [choose_encoder(source.video_format, tool, formats=formats)]
     if attempts[0].gpu:
@@ -297,11 +302,11 @@ def render(video: Path, audio: Path, subtitles: Path | None, target: Path, *, to
     for index, encoder in enumerate(attempts):
         bitrate = target_bitrate(source, encoder.format)
         log.info("source %s at %s → %s at %s, audio %s", source.video_format or "unknown",
-                 format_bitrate(source.video_bitrate), encoder.label, format_bitrate(bitrate), audio_codec)
+                 format_bitrate(source.video_bitrate), encoder.label, format_bitrate(bitrate), sound)
         try:
             _render(tool.path, encoder, bitrate, (audio_codec, audio_bitrate), video, audio, subtitles, target,
                     **options)
-            return f"{encoder.label} at {format_bitrate(bitrate)} + {audio_codec}"
+            return f"{encoder.label} at {format_bitrate(bitrate)} + {sound}"
         except FfmpegError as error:
             if index == len(attempts) - 1:
                 raise
@@ -309,7 +314,7 @@ def render(video: Path, audio: Path, subtitles: Path | None, target: Path, *, to
     raise AssertionError("unreachable")
 
 
-def _render(binary: str, encoder: Encoder | None, bitrate: int | None, audio_encoding: tuple[str, str],
+def _render(binary: str, encoder: Encoder | None, bitrate: int | None, audio_encoding: tuple[str, str | None],
             video: Path, audio: Path, subtitles: Path | None, target: Path, *, darken: float,
             duration: float | None, lead: Path | None, lead_volume: float, target_height: int,
             source_height: int | None, browser: bool, on_progress: ProgressCallback | None) -> None:
@@ -343,8 +348,8 @@ def _render(binary: str, encoder: Encoder | None, bitrate: int | None, audio_enc
         lead_stream = ffmpeg.input(relative(lead)).audio.filter("volume", lead_volume)
         sound = ffmpeg.filter([sound, lead_stream], "amix", inputs=2, duration="first", dropout_transition=0)
     audio_codec, audio_bitrate = audio_encoding
-    stream = ffmpeg.output(picture, sound, relative(partial), acodec=audio_codec, audio_bitrate=audio_bitrate,
-                           shortest=None, **video_options)
+    audio_options = {"acodec": audio_codec, **({"audio_bitrate": audio_bitrate} if audio_bitrate else {})}
+    stream = ffmpeg.output(picture, sound, relative(partial), shortest=None, **audio_options, **video_options)
     run(stream, binary=binary, cwd=folder, duration=duration, on_progress=on_progress)
     partial.replace(target)
 

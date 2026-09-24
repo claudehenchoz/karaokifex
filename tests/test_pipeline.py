@@ -39,6 +39,14 @@ def test_task_graph_is_valid_and_wired(job):
     assert tasks["render"].outputs == (job.workspace.final_video,)
     assert "transcribe_mix" not in tasks
     assert "palette" not in tasks
+    assert "original" not in tasks
+
+
+def test_keep_source_renders_the_original_in_the_output_format(job):
+    job = replace(job, config=replace(job.config, keep_source=True, browser_friendly=True))
+    tasks = tasks_of(job)
+    assert set(tasks["original"].deps) == {"download", "extract_video"}
+    assert tasks["original"].outputs == (job.workspace.root / "Artist - Song (Original).mp4",)
 
 
 def test_mix_vote_and_debug_change_the_graph(job):

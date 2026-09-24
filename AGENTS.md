@@ -112,5 +112,6 @@ harmless messages are dropped by `_DropKnownNoise`. `cli.py` sets `TQDM_DISABLE`
   the best `Alignment.quality`. `load_lyrics` still reads the old single-match format.
 - **Cleanup.** `Workspace.artifacts()` defines what survives cleanup, including karaoke videos from
   earlier runs; everything else in the song folder is temporary. Temporary files are deleted after every
-  successful run without asking (`--keep-temp` keeps them, `--keep-source` keeps just the download);
-  failed runs keep everything so they can resume.
+  successful run without asking (`--keep-temp` keeps them); failed runs keep everything so they can
+  resume. `--keep-source` doesn't keep `source.mkv` itself: the `original` task renders it like the
+  karaoke video (same `media.render`, `copy_audio=True`) as `(Original).mkv`/`.mp4`, which is an artifact.

@@ -11,7 +11,8 @@ render) and the lead vocals (for transcription, vocal activity and forced
 alignment). With --mix-vote, `transcribe_mix` also transcribes the full mix.
 With --no-burn-lyrics, `render` doesn't wait for `subtitles`, which still writes
 the lyrics files. With --palette, `palette` samples frames of the extracted video
-for its dominant colours.
+for its dominant colours. With --keep-source, `original` puts the download's own
+sound back under the video, in the output format.
 `probe` runs first on its own (its metadata names the song folder); the task
 runner handles the rest.
 """
@@ -78,6 +79,13 @@ class Job:
             video = self.workspace.plain_video
         else:
             video = self.workspace.debug_video if self.config.debug_ass else self.workspace.final_video
+        return self._in_output_format(video)
+
+    @property
+    def original_video(self) -> Path:
+        return self._in_output_format(self.workspace.original_video)
+
+    def _in_output_format(self, video: Path) -> Path:
         return video.with_suffix(".mp4") if self.config.browser_friendly else video
 
 
@@ -135,6 +143,10 @@ def build_tasks(job: Job) -> list[Task]:
         tasks.append(Task("transcribe_mix", partial(_transcribe_mix, job),
                           deps=("extract_audio", "load_whisper", "lyrics", "transcribe"),
                           outputs=(ws.transcript_mix_json,), gpu=True, description="whisperx on the full mix"))
+    if cfg.keep_source:
+        tasks.append(Task("original", partial(_original, job), deps=("download", "extract_video"),
+                          outputs=(job.original_video,), gpu=job.ffmpeg.gpu,
+                          description="the original video with its own sound"))
     if cfg.palette:
         tasks.append(Task("palette", partial(_palette, job), deps=("extract_video",), outputs=(ws.metadata_json,),
                           description="dominant colours of the video"))
@@ -367,13 +379,28 @@ def _subtitles(job: Job, ctx: TaskContext) -> str:
     return description
 
 
-def _render(job: Job, ctx: TaskContext) -> str:
-    ws = job.workspace
+def _source_info(job: Job) -> media.SourceInfo:
     try:
-        source = media.probe_source(ws.video, ws.source, ffprobe=job.ffmpeg.ffprobe)
+        return media.probe_source(job.workspace.video, job.workspace.source, ffprobe=job.ffmpeg.ffprobe)
     except (ffmpeg.Error, OSError) as error:
         log.warning("couldn't inspect the source video (%s) — encoding at constant quality", error)
-        source = media.SourceInfo()
+        return media.SourceInfo()
+
+
+def _original(job: Job, ctx: TaskContext) -> str:
+    """The download in the output format: the same picture treatment as the karaoke video, the source's own sound."""
+    ws = job.workspace
+    encoding = media.render(ws.video, ws.source, None, job.original_video, tool=job.ffmpeg, source=_source_info(job),
+                            target_height=job.config.resolution, browser=job.config.browser_friendly,
+                            copy_audio=True, duration=job.info.duration, on_progress=ctx.progress)
+    size = job.original_video.stat().st_size / 1_048_576
+    log.info("wrote %s (%.0f MiB) with %s", job.original_video.name, size, encoding)
+    return encoding
+
+
+def _render(job: Job, ctx: TaskContext) -> str:
+    ws = job.workspace
+    source = _source_info(job)
     if not job.config.burn_lyrics:
         subtitles = None
     else:

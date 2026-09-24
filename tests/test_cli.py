@@ -90,12 +90,14 @@ def test_temp_files_are_deleted_without_asking(fake_run):
     assert ws.final_video.exists()
 
 
-def test_keep_source_keeps_the_download(fake_run):
+def test_keep_source_keeps_the_original_instead_of_the_download(fake_run):
     ws = fake_run["workspace"]
-    ws.karaoke_lead.write_text("temp")
+    ws.original_video.write_text("original")
     result = CliRunner().invoke(cli.main, [URL, "--keep-source"])
     assert result.exit_code == 0, result.output
-    assert ws.source.exists() and not ws.karaoke_lead.exists()
+    assert fake_run["config"].keep_source is True
+    assert ws.original_video.exists() and not ws.source.exists()
+    assert "Original" in result.output
 
 
 def test_keep_temp_keeps_everything(fake_run):

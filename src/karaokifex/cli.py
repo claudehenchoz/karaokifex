@@ -76,7 +76,8 @@ log = logging.getLogger("karaokifex")
               help="Render '(Karaoke debug).mkv' with each word coloured by what timed it "
                    "(green forced, cyan whisper, violet LRC tag, orange LRC line, red interpolated).")
 @click.option("--keep-source", is_flag=True,
-              help="Keep the original download (source.mkv) when the temporary files are deleted.")
+              help="Also keep the original video with its own sound (vocals included) as '(Original).mkv', "
+                   "made like the karaoke video: the same format, resolution and --browser-friendly MP4.")
 @click.option("--keep-temp", is_flag=True,
               help="Keep all temporary files (e.g. for karaokifex-eval --recompute). By default they are "
                    "deleted after a successful run.")
@@ -104,7 +105,7 @@ def main(url: str, **options: object) -> None:
     if not result.ok:
         console.print("Temporary files were kept, so running the same command again resumes where it stopped.")
         raise SystemExit(1)
-    clean_up(result.job.workspace, keep_temp=config.keep_temp, keep_source=config.keep_source)
+    clean_up(result.job.workspace, keep_temp=config.keep_temp)
 
 
 def show_result(result: PipelineResult) -> None:
@@ -113,6 +114,8 @@ def show_result(result: PipelineResult) -> None:
     details = [("Song", result.job.title), ("Folder", str(ws.root.resolve()))]
     if result.ok:
         details.insert(0, ("Video", str(result.job.output_video.resolve())))
+        if result.job.config.keep_source:
+            details.insert(1, ("Original", str(result.job.original_video.resolve())))
         chosen = outcomes["subtitles"].result if "subtitles" in outcomes else None
         lyrics_source = chosen or outcomes["lyrics"].result or "lrclib (from an earlier run)"
         details.append(("Lyrics", lyrics_source))
@@ -123,18 +126,17 @@ def show_result(result: PipelineResult) -> None:
     print_summary(result.ok, details)
 
 
-def clean_up(workspace: Workspace, *, keep_temp: bool, keep_source: bool) -> None:
+def clean_up(workspace: Workspace, *, keep_temp: bool) -> None:
     """Delete the temporary files of a successful run, unless --keep-temp asks to keep them."""
-    temp_files = workspace.temp_files(keep_source=keep_source)
+    temp_files = workspace.temp_files()
     if not temp_files:
         return
     total = human_size(sum(path.stat().st_size for path in temp_files))
     if keep_temp:
         console.print(f"Kept {len(temp_files)} temporary files ({total}) in {workspace.root}.")
         return
-    removed = workspace.cleanup(keep_source=keep_source)
-    console.print(f"🧹 Removed {len(removed)} temporary files ({total})."
-                  + (f" Kept the original download, {workspace.source.name}." if workspace.source.exists() else ""))
+    removed = workspace.cleanup()
+    console.print(f"🧹 Removed {len(removed)} temporary files ({total}).")
 
 
 def human_size(size: float) -> str:

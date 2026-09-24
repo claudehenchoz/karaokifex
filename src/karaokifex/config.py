@@ -36,7 +36,7 @@ class Config:
     palette: bool = False  # find the video's dominant colours and write them to metadata.json
     debug_ass: bool = False  # render with words coloured by timing source
     keep_temp: bool = False  # keep every temporary file (they are deleted after a successful run)
-    keep_source: bool = False  # keep the original download when the temporary files are deleted
+    keep_source: bool = False  # also render the original video with its own sound, like the karaoke video
     force: bool = False
     verbose: bool = False
 
