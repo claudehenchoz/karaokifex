@@ -32,7 +32,8 @@ class Config:
     model_dir: Path = DEFAULT_MODEL_DIR
     mix_vote: bool = False  # also transcribe the full mix and let both transcriptions vote
     debug_ass: bool = False  # render with words coloured by timing source
-    autodelete: bool = False
+    keep_temp: bool = False  # keep every temporary file (they are deleted after a successful run)
+    keep_source: bool = False  # keep the original download when the temporary files are deleted
     force: bool = False
     verbose: bool = False
 

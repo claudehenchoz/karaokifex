@@ -11,7 +11,7 @@ word-by-word highlight). See README.md for user-facing usage, the step table and
   (`[tool.uv.sources]` in pyproject.toml); PyPI only has CPU wheels on Windows.
 - `uv run pytest`: the full suite takes about 1 s and needs no GPU, network or ffmpeg.
 - Single test: `uv run pytest tests/test_timing.py::test_repeated_chorus_matches_the_right_occurrence`
-- `uv run karaokifex <url> -a <artist> -s <song> [-l en] [-o <dir>] [--force] [--autodelete] [--debug-ass] [--mix-vote] [-v]`
+- `uv run karaokifex <url> -a <artist> -s <song> [-l en] [-o <dir>] [--force] [--keep-source] [--keep-temp] [--debug-ass] [--mix-vote] [-v]`
 - `uv run karaokifex-eval <song folder>... [--recompute [--baseline]]`: word onset error against a
   `reference.ass`/`reference.lrc` in the folder. `--recompute` needs the folder's temp files and no GPU.
 - No linter or formatter is configured.
@@ -103,4 +103,6 @@ harmless messages are dropped by `_DropKnownNoise`. `cli.py` sets `TQDM_DISABLE`
 - **Lyrics candidates.** `lyrics.json` stores up to 3 lrclib versions; `subtitles` aligns each and keeps
   the best `Alignment.quality`. `load_lyrics` still reads the old single-match format.
 - **Cleanup.** `Workspace.artifacts()` defines what survives cleanup, including karaoke videos from
-  earlier runs; everything else in the song folder is temporary.
+  earlier runs; everything else in the song folder is temporary. Temporary files are deleted after every
+  successful run without asking (`--keep-temp` keeps them, `--keep-source` keeps just the download);
+  failed runs keep everything so they can resume.

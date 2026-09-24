@@ -121,21 +121,28 @@ class Workspace:
         return self.root / f"{sanitize_name(self.title)} (Karaoke debug).mkv"
 
     # --- cleanup -----------------------------------------------------------------
-    def artifacts(self) -> frozenset[Path]:
-        """Files worth keeping after a successful run — including karaoke videos from earlier runs."""
+    def artifacts(self, *, keep_source: bool = False) -> frozenset[Path]:
+        """Files worth keeping after a successful run — including karaoke videos from earlier runs.
+
+        Besides the video and its audio, that is the data describing it: the lyrics, their word
+        timings and the video's metadata. `keep_source` also keeps the original download.
+        """
         earlier_renders = [*self.root.glob(f"{glob.escape(self.final_video.stem)}.*"),
                            *self.root.glob(f"{glob.escape(self.debug_video.stem)}.*")]
-        keep = {self.final_video, self.subtitles, self.karaoke_backing, self.lyrics_json}
+        keep = {self.final_video, self.subtitles, self.karaoke_backing, self.lyrics_json, self.timings_json,
+                self.info_json}
+        if keep_source:
+            keep.add(self.source)
         return frozenset(keep | {p for p in earlier_renders if ".partial." not in p.name})
 
-    def temp_files(self) -> list[Path]:
+    def temp_files(self, *, keep_source: bool = False) -> list[Path]:
         """Every file in the workspace that is not an artifact."""
-        keep = {path.resolve() for path in self.artifacts()}
+        keep = {path.resolve() for path in self.artifacts(keep_source=keep_source)}
         return sorted(p for p in self.root.rglob("*") if p.is_file() and p.resolve() not in keep)
 
-    def cleanup(self) -> list[Path]:
+    def cleanup(self, *, keep_source: bool = False) -> list[Path]:
         """Delete all temp files (and folders left empty); returns what was removed."""
-        removed = self.temp_files()
+        removed = self.temp_files(keep_source=keep_source)
         for path in removed:
             path.unlink(missing_ok=True)
         directories = sorted((d for d in self.root.rglob("*") if d.is_dir()), key=lambda d: len(d.parts), reverse=True)

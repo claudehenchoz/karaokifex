@@ -67,9 +67,11 @@ board shows every step's state, and each log line is tagged with the step that w
 
 All files for a song go into a folder named `Artist - Song` in the current directory (or `--output-dir`).
 If you re-run the same command, any step whose output already exists is skipped, so a failed run picks
-up where it stopped (`--force` redoes everything). At the end, karaokifex asks before deleting the
-temporary files (`--autodelete` skips the question). It keeps the video, the ASS file, the karaoke audio
-track, and the lyrics.
+up where it stopped (`--force` redoes everything). After a successful run, karaokifex deletes the
+temporary files. It keeps the video, the ASS file, the karaoke audio track, the lyrics with their word
+timings (`timings.json`), and the video's metadata (`info.json`). `--keep-source` also keeps the original
+download (`source.mkv`), so a later run with other settings starts from it instead of downloading again.
+`--keep-temp` keeps every file.
 
 ### How the words get their timing
 
@@ -99,10 +101,10 @@ Low-confidence words are underlined. `lyrics.debug.ass` is written on every run,
 `mpv video.mkv --sub-file=lyrics.debug.ass` shows the same thing without rendering.
 
 To measure timing, put a `reference.ass` (for example timed in Aegisub against the video) or an enhanced
-`reference.lrc` into a song folder and keep its temporary files. `karaokifex-eval <song folder>...` then
-reports the median word onset error and the share of words within 100/300 ms, per timing source.
-`--recompute` re-runs the alignment from the cached files (no GPU needed), and `--baseline` compares
-against whisper-only matching.
+`reference.lrc` into a song folder and keep its temporary files (`--keep-temp`).
+`karaokifex-eval <song folder>...` then reports the median word onset error and the share of words within
+100/300 ms, per timing source. `--recompute` re-runs the alignment from the cached files (no GPU needed),
+and `--baseline` compares against whisper-only matching.
 
 There is a single stem separation pass. The karaoke model's lead-vocal stem doubles as whisperx's input,
 which also keeps backing vocals out of the transcription. The Roformer model runs in half precision
@@ -129,7 +131,7 @@ Run `karaokifex --help` for all options.
 
 ```
 src/karaokifex/
-  cli.py          command line (click), cleanup prompt
+  cli.py          command line (click), cleanup
   pipeline.py     the task graph: which step needs what
   runner.py       generic parallel dependency-graph runner
   console.py      rich logging + live task board

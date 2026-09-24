@@ -12,7 +12,6 @@ import logging  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 import click  # noqa: E402
-from rich.table import Table  # noqa: E402
 
 from karaokifex import __version__  # noqa: E402
 from karaokifex.config import (  # noqa: E402
@@ -66,7 +65,13 @@ log = logging.getLogger("karaokifex")
 @click.option("--debug-ass", is_flag=True,
               help="Render '(Karaoke debug).mkv' with each word coloured by what timed it "
                    "(green forced, cyan whisper, violet LRC tag, orange LRC line, red interpolated).")
-@click.option("--autodelete", is_flag=True, help="Delete temporary files at the end without asking.")
+@click.option("--keep-source", is_flag=True,
+              help="Keep the original download (source.mkv) when the temporary files are deleted.")
+@click.option("--keep-temp", is_flag=True,
+              help="Keep all temporary files (e.g. for karaokifex-eval --recompute). By default they are "
+                   "deleted after a successful run.")
+@click.option("--autodelete", is_flag=True, hidden=True, expose_value=False,
+              help="No effect: temporary files are now deleted by default.")
 @click.option("--force", is_flag=True, help="Redo every step, even if its output already exists.")
 @click.option("-v", "--verbose", is_flag=True, help="Show debug output, including the libraries' logs.")
 @click.version_option(__version__, "-V", "--version")
@@ -87,7 +92,7 @@ def main(url: str, **options: object) -> None:
     if not result.ok:
         console.print("Temporary files were kept, so running the same command again resumes where it stopped.")
         raise SystemExit(1)
-    offer_cleanup(result.job.workspace, autodelete=config.autodelete)
+    clean_up(result.job.workspace, keep_temp=config.keep_temp, keep_source=config.keep_source)
 
 
 def show_result(result: PipelineResult) -> None:
@@ -106,23 +111,18 @@ def show_result(result: PipelineResult) -> None:
     print_summary(result.ok, details)
 
 
-def offer_cleanup(workspace: Workspace, *, autodelete: bool) -> None:
-    temp_files = workspace.temp_files()
+def clean_up(workspace: Workspace, *, keep_temp: bool, keep_source: bool) -> None:
+    """Delete the temporary files of a successful run, unless --keep-temp asks to keep them."""
+    temp_files = workspace.temp_files(keep_source=keep_source)
     if not temp_files:
         return
-    table = Table(title="Temporary files", title_justify="left", show_header=False, box=None, padding=(0, 2))
-    table.add_column(style="grey70")
-    table.add_column(justify="right", style="grey50")
-    for path in temp_files:
-        table.add_row(str(path.relative_to(workspace.root)), human_size(path.stat().st_size))
-    total = sum(path.stat().st_size for path in temp_files)
-    console.print(table)
-    if autodelete or click.confirm(f"Delete these {len(temp_files)} temporary files ({human_size(total)})?",
-                                   default=True):
-        removed = workspace.cleanup()
-        console.print(f"🧹 Removed {len(removed)} temporary files.")
-    else:
-        console.print(f"Kept temporary files in {workspace.root}.")
+    total = human_size(sum(path.stat().st_size for path in temp_files))
+    if keep_temp:
+        console.print(f"Kept {len(temp_files)} temporary files ({total}) in {workspace.root}.")
+        return
+    removed = workspace.cleanup(keep_source=keep_source)
+    console.print(f"🧹 Removed {len(removed)} temporary files ({total})."
+                  + (f" Kept the original download, {workspace.source.name}." if workspace.source.exists() else ""))
 
 
 def human_size(size: float) -> str:
