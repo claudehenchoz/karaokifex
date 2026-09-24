@@ -11,7 +11,7 @@ word-by-word highlight). See README.md for user-facing usage, the step table and
   (`[tool.uv.sources]` in pyproject.toml); PyPI only has CPU wheels on Windows.
 - `uv run pytest`: the full suite takes about 1 s and needs no GPU, network or ffmpeg.
 - Single test: `uv run pytest tests/test_timing.py::test_repeated_chorus_matches_the_right_occurrence`
-- `uv run karaokifex <url> -a <artist> -s <song> [-l en] [-o <dir>] [--force] [--keep-source] [--keep-temp] [--debug-ass] [--mix-vote] [-v]`
+- `uv run karaokifex <url> -a <artist> -s <song> [-l en] [-o <dir>] [--force] [--keep-source] [--keep-temp] [--palette] [--debug-ass] [--mix-vote] [-v]`
 - `uv run karaokifex-eval <song folder>... [--recompute [--baseline]]`: word onset error against a
   `reference.ass`/`reference.lrc` in the folder. `--recompute` needs the folder's temp files and no GPU.
 - No linter or formatter is configured.
@@ -60,6 +60,9 @@ way: CLI startup stays fast, and the tests never import them (test_transcription
 - `ass.py`: `\kf` karaoke tags. Durations are differences of rounded absolute times, so the tags always
   sum to the line length. Lines alternate between an upper and a lower slot.
 - `metadata.py`: artist/song from yt-dlp metadata or the video title.
+- `palette.py`: `--palette`, deterministic k-means (fixed-seed k-means++) over frames that
+  `media.sample_frames` grabs with one fast seek each (dav1d ignores `-skip_frame nokey`, so decoding
+  only keyframes doesn't work); black bars are cropped first. Written to `metadata.json`.
 
 **Logging.** `runner.current_task` (a ContextVar set inside each worker) tags every log line with its
 task (`console.TaskLogHandler`). Some libraries install their own console handlers: `setup_logging`

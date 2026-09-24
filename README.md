@@ -51,6 +51,7 @@ uv run karaokifex "https://www.youtube.com/watch?v=..."
 | `download`         | yt-dlp, best video + best audio                                 | `source.mkv`                                |
 | `extract_audio`    | ffmpeg                                                          | `audio.wav`                                 |
 | `extract_video`    | ffmpeg (stream copy)                                            | `video.mkv`                                 |
+| `palette`          | only with `--palette`: the video's dominant colours (k-means over 32 sampled frames) | `metadata.json`        |
 | `separate_karaoke` | audio-separator, `mel_band_roformer_karaoke_gabox.ckpt`         | `stems/karaoke_backing.wav`, `stems/karaoke_lead.wav` |
 | `lyrics`           | lrclib.net, up to 3 versions (the one that fits the audio wins) | `lyrics.json`                               |
 | `load_whisper`     | whisperx model load (runs early, while everything else works)   | –                                           |
@@ -69,9 +70,9 @@ All files for a song go into a folder named `Artist - Song` in the current direc
 If you re-run the same command, any step whose output already exists is skipped, so a failed run picks
 up where it stopped (`--force` redoes everything). After a successful run, karaokifex deletes the
 temporary files. It keeps the video, the ASS file, the karaoke audio track, the lyrics with their word
-timings (`timings.json`), and the video's metadata (`info.json`). `--keep-source` also keeps the original
-download (`source.mkv`), so a later run with other settings starts from it instead of downloading again.
-`--keep-temp` keeps every file.
+timings (`timings.json`), and the video's metadata (`info.json`, `metadata.json`). `--keep-source` also
+keeps the original download (`source.mkv`), so a later run with other settings starts from it instead of
+downloading again. `--keep-temp` keeps every file.
 
 ### How the words get their timing
 
@@ -122,6 +123,16 @@ without re-encoding, unless the source is below `--resolution` and must be upsca
 `<Artist - Song> (Karaoke, no lyrics).mkv`, and the lyrics are still written to `lyrics.ass` and
 `timings.json` (every word with its start and end), for a player that shows them itself.
 
+`--palette` finds the video's five dominant colours and writes them to `metadata.json`, most common
+first, each with its share of the picture (black letterbox and pillarbox bars don't count):
+
+```
+{"palette": {"colors": [{"hex": "#282522", "rgb": [40, 37, 34], "weight": 0.2803}, ...], "frames": 32}}
+```
+
+The colours come from k-means over 32 small frames spread across the video, one fast seek each, so the
+step takes seconds and runs while the stems are separated.
+
 The output is an MKV, like the download. The video keeps the source's format when the GPU can encode
 it; otherwise it uses the most efficient format the GPU can encode. For example, an RTX 30xx can't encode
 AV1, so AV1 sources become HEVC. The bitrate follows the source's, scaled by how efficient the output
@@ -148,6 +159,7 @@ src/karaokifex/
   ass.py          timed lines → karaoke ASS (pure)
   evaluate.py     karaokifex-eval: timing accuracy against a reference
   metadata.py     artist/song from video metadata (pure)
+  palette.py      dominant colours of the video (pure)
   steps/          one module per external tool: download, media, separation, lyrics, transcription
 ```
 

@@ -32,6 +32,7 @@ class Config:
     output_dir: Path = Path(".")
     model_dir: Path = DEFAULT_MODEL_DIR
     mix_vote: bool = False  # also transcribe the full mix and let both transcriptions vote
+    palette: bool = False  # find the video's dominant colours and write them to metadata.json
     debug_ass: bool = False  # render with words coloured by timing source
     keep_temp: bool = False  # keep every temporary file (they are deleted after a successful run)
     keep_source: bool = False  # keep the original download when the temporary files are deleted

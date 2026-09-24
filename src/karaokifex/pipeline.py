@@ -10,7 +10,8 @@ One separation pass yields both stems the rest needs: the backing track (for
 render) and the lead vocals (for transcription, vocal activity and forced
 alignment). With --mix-vote, `transcribe_mix` also transcribes the full mix.
 With --no-burn-lyrics, `render` doesn't wait for `subtitles`, which still writes
-the lyrics files.
+the lyrics files. With --palette, `palette` samples frames of the extracted video
+for its dominant colours.
 `probe` runs first on its own (its metadata names the song folder); the task
 runner handles the rest.
 """
@@ -35,6 +36,7 @@ from karaokifex.console import TaskBoard, console, register_tasks
 from karaokifex.gpu import free_gpu_memory
 from karaokifex.metadata import guess_artist_song
 from karaokifex.models import Lyrics, TimedWord, VideoInfo
+from karaokifex.palette import dominant_colors, without_bars
 from karaokifex.runner import RunReport, Task, TaskContext, TaskRunner, current_task
 from karaokifex.steps import download, lyrics, media, separation, transcription
 from karaokifex.timing import (
@@ -130,6 +132,9 @@ def build_tasks(job: Job) -> list[Task]:
         tasks.append(Task("transcribe_mix", partial(_transcribe_mix, job),
                           deps=("extract_audio", "load_whisper", "lyrics", "transcribe"),
                           outputs=(ws.transcript_mix_json,), gpu=True, description="whisperx on the full mix"))
+    if cfg.palette:
+        tasks.append(Task("palette", partial(_palette, job), deps=("extract_video",), outputs=(ws.metadata_json,),
+                          description="dominant colours of the video"))
     subtitle_deps = ("lyrics", "transcribe", "vocal_activity", "force_align")
     # Without burned-in lyrics the render doesn't wait for them; the subtitles step still writes the lyrics files.
     render_deps = ("extract_video", "separate_karaoke") + (("subtitles",) if cfg.burn_lyrics else ())
@@ -195,6 +200,19 @@ def _extract_audio(job: Job, ctx: TaskContext) -> None:
 def _extract_video(job: Job, ctx: TaskContext) -> None:
     media.extract_video(job.workspace.source, job.workspace.video, binary=job.ffmpeg.path,
                         duration=job.info.duration, on_progress=ctx.progress)
+
+
+def _palette(job: Job, ctx: TaskContext) -> None:
+    ws = job.workspace
+    ctx.note("sampling frames…")
+    frames = media.sample_frames(ws.video, binary=job.ffmpeg.path, ffprobe=job.ffmpeg.ffprobe,
+                                 duration=job.info.duration)
+    if not len(frames):
+        raise RuntimeError(f"no frame of {ws.video.name} could be decoded")
+    swatches = dominant_colors(without_bars(frames))
+    _write_json(ws.metadata_json, {"palette": {"colors": [swatch.to_dict() for swatch in swatches],
+                                               "frames": len(frames)}})
+    log.info("dominant colours: %s", ", ".join(f"{swatch.hex} {swatch.weight:.0%}" for swatch in swatches))
 
 
 def _separate_karaoke(job: Job, ctx: TaskContext) -> None:

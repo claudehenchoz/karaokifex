@@ -65,6 +65,9 @@ log = logging.getLogger("karaokifex")
               show_default=True, help="Cache folder for separation models.")
 @click.option("--mix-vote", is_flag=True,
               help="Also transcribe the full mix and let both transcriptions vote on word times (slower).")
+@click.option("--palette", is_flag=True,
+              help="Find the video's dominant colours (5, each with its share of the picture) and write them "
+                   "to metadata.json.")
 @click.option("--debug-ass", is_flag=True,
               help="Render '(Karaoke debug).mkv' with each word coloured by what timed it "
                    "(green forced, cyan whisper, violet LRC tag, orange LRC line, red interpolated).")

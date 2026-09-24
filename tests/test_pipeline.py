@@ -1,6 +1,7 @@
 import json
 from dataclasses import replace
 
+import numpy as np
 import pytest
 
 from karaokifex import pipeline
@@ -37,6 +38,7 @@ def test_task_graph_is_valid_and_wired(job):
     assert set(tasks["render"].deps) == {"extract_video", "separate_karaoke", "subtitles"}
     assert tasks["render"].outputs == (job.workspace.final_video,)
     assert "transcribe_mix" not in tasks
+    assert "palette" not in tasks
 
 
 def test_mix_vote_and_debug_change_the_graph(job):
@@ -54,6 +56,23 @@ def test_without_burned_in_lyrics_the_render_does_not_wait_for_them(job):
     assert set(tasks["render"].deps) == {"extract_video", "separate_karaoke"}
     assert "subtitles" in tasks  # the lyrics files are still written
     assert tasks["render"].outputs == (job.workspace.plain_video,)
+
+
+def test_palette_step_writes_the_dominant_colours(job, monkeypatch):
+    job = replace(job, config=replace(job.config, palette=True))
+    assert tasks_of(job)["palette"].deps == ("extract_video",)
+    frames = np.zeros((4, 36, 64, 3), dtype=np.uint8)
+    frames[:, :9], frames[:, 9:27] = (255, 0, 0), (0, 0, 255)  # the black rows below are a letterbox bar
+    monkeypatch.setattr(pipeline.media, "sample_frames", lambda video, **options: frames)
+    pipeline._palette(job, ctx=Ctx())
+    metadata = json.loads(job.workspace.metadata_json.read_text(encoding="utf-8"))
+    assert metadata["palette"] == {"frames": 4, "colors": [{"hex": "#0000ff", "rgb": [0, 0, 255], "weight": 0.6667},
+                                                           {"hex": "#ff0000", "rgb": [255, 0, 0], "weight": 0.3333}]}
+
+
+class Ctx:
+    def note(self, text):
+        pass
 
 
 WORDS = [TimedWord("hello", 5.0, 5.4), TimedWord("world", 5.5, 6.0), TimedWord("again", 8.0, 8.6)]

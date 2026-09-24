@@ -41,7 +41,7 @@ def test_cleanup_keeps_artifacts(tmp_path):
 
 def test_cleanup_keeps_the_lyrics_data(tmp_path):
     ws = Workspace.create(tmp_path, "Artist - Song")
-    assert {ws.timings_json, ws.info_json, ws.lyrics_json, ws.subtitles} <= ws.artifacts()
+    assert {ws.timings_json, ws.info_json, ws.metadata_json, ws.lyrics_json, ws.subtitles} <= ws.artifacts()
 
 
 def test_cleanup_can_keep_the_source(tmp_path):

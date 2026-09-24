@@ -113,6 +113,11 @@ class Workspace:
         return self.root / "lyrics.debug.ass"
 
     @property
+    def metadata_json(self) -> Path:
+        """What karaokifex finds out about the video itself (--palette: its dominant colours)."""
+        return self.root / "metadata.json"
+
+    @property
     def final_video(self) -> Path:
         return self.root / f"{sanitize_name(self.title)} (Karaoke).mkv"
 
@@ -135,7 +140,7 @@ class Workspace:
         earlier_renders = [path for video in (self.final_video, self.debug_video, self.plain_video)
                            for path in self.root.glob(f"{glob.escape(video.stem)}.*")]
         keep = {self.final_video, self.subtitles, self.karaoke_backing, self.lyrics_json, self.timings_json,
-                self.info_json}
+                self.info_json, self.metadata_json}
         if keep_source:
             keep.add(self.source)
         return frozenset(keep | {p for p in earlier_renders if ".partial." not in p.name})

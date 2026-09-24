@@ -8,11 +8,13 @@ import os
 import shutil
 import subprocess
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 import ffmpeg
+import numpy as np
 
 from karaokifex.workspace import partial_path
 
@@ -30,6 +32,8 @@ BITRATE_FACTOR = {"av1": 1.0, "vp9": 1.3, "hevc": 1.3, "h264": 1.8}
 AUDIO_ENCODERS = {"opus": ("libopus", "160k"), "aac": ("aac", "256k")}
 
 _SOFTWARE_ENCODERS = frozenset({*CPU_ENCODERS.values(), "libopus", "aac"})
+# Below-normal priority keeps the desktop responsive while ffmpeg crunches.
+_BELOW_NORMAL = subprocess.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 0
 
 
 @dataclass(frozen=True)
@@ -222,6 +226,35 @@ def extract_video(source: Path, target: Path, *, binary: str = "ffmpeg", duratio
     partial.replace(target)
 
 
+def sample_frames(video: Path, *, binary: str = "ffmpeg", ffprobe: str = "ffprobe", count: int = 32,
+                  size: tuple[int, int] = (64, 36), duration: float | None = None) -> np.ndarray:
+    """`count` small RGB frames spread evenly over the video, as an array (frames, height, width, 3).
+
+    Each frame is a fast seek to the keyframe nearest its time, so only `count` frames get decoded
+    (some decoders, dav1d among them, ignore ffmpeg's keyframes-only switch).
+    """
+    if not duration:
+        duration = float(ffmpeg.probe(str(video), cmd=ffprobe)["format"]["duration"])
+    width, height = size
+
+    def grab(time: float) -> bytes:
+        stream = (ffmpeg.input(str(video), ss=round(time, 3), noaccurate_seek=None).video
+                  .filter("scale", width, height)
+                  .output("pipe:", vframes=1, format="rawvideo", pix_fmt="rgb24"))
+        args = [binary, "-hide_banner", "-loglevel", "error", *ffmpeg.compile(stream)[1:]]
+        result = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True, timeout=120,
+                                creationflags=_BELOW_NORMAL)
+        if result.returncode != 0:
+            details = result.stderr.decode("utf-8", "replace").strip()[-2000:]
+            raise FfmpegError(f"ffmpeg exited with code {result.returncode}: {details}")
+        return result.stdout
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        frames = pool.map(grab, [(index + 0.5) / count * duration for index in range(count)])
+        data = b"".join(frame for frame in frames if len(frame) == width * height * 3)
+    return np.frombuffer(data, dtype=np.uint8).reshape(-1, height, width, 3)
+
+
 def render(video: Path, audio: Path, subtitles: Path | None, target: Path, *, tool: FfmpegBinary,
            source: SourceInfo, lead: Path | None = None, lead_volume: float = 0.0, darken: float = 0.08,
            target_height: int = 1080, duration: float | None = None,
@@ -299,11 +332,9 @@ def run(stream: Any, *, binary: str = "ffmpeg", cwd: Path | None = None, duratio
     args = [binary, "-hide_banner", "-nostats", "-loglevel", "error", "-progress", "pipe:1", "-y",
             *ffmpeg.compile(stream)[1:]]
     log.debug("$ %s", subprocess.list2cmdline(args))
-    # Below-normal priority keeps the desktop responsive while ffmpeg crunches.
-    priority = subprocess.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 0
     process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
-                               creationflags=priority)
+                               creationflags=_BELOW_NORMAL)
     errors: list[str] = []
     reader = threading.Thread(target=lambda: errors.extend(process.stderr), daemon=True)  # type: ignore[arg-type]
     reader.start()

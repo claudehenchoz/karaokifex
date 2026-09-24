@@ -63,6 +63,12 @@ def test_burn_lyrics_option_becomes_config(fake_run):
     assert fake_run["config"].burn_lyrics is False
 
 
+def test_palette_option_becomes_config(fake_run):
+    result = CliRunner().invoke(cli.main, [URL, "--palette"])
+    assert result.exit_code == 0, result.output
+    assert fake_run["config"].palette is True
+
+
 def test_debug_ass_needs_burned_in_lyrics(fake_run):
     result = CliRunner().invoke(cli.main, [URL, "--no-burn-lyrics", "--debug-ass"])
     assert result.exit_code == 2
