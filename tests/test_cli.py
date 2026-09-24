@@ -33,12 +33,12 @@ def fake_run(monkeypatch, tmp_path):
 
 
 def test_options_become_config(fake_run):
-    args = [URL, "-a", "Artist", "-s", "Song", "--gpu-jobs", "2", "--overlap", "4", "--fp32", "--autodelete",
+    args = [URL, "-a", "Artist", "-s", "Song", "--gpu-jobs", "2", "--overlap", "4", "--fp32", "--keep-temp",
             "--mix-vote", "--debug-ass"]
     result = CliRunner().invoke(cli.main, args)
     assert result.exit_code == 0, result.output
     config: Config = fake_run["config"]
-    assert (config.url, config.artist, config.song, config.gpu_jobs, config.autodelete) == (URL, "Artist", "Song", 2, True)
+    assert (config.url, config.artist, config.song, config.gpu_jobs, config.keep_temp) == (URL, "Artist", "Song", 2, True)
     assert (config.separation_overlap, config.fp16) == (4, False)
     assert (config.mix_vote, config.debug_ass) == (True, True)
 
@@ -55,27 +55,73 @@ def test_lead_volume_option_becomes_config(fake_run):
     assert fake_run["config"].lead_volume == 0.35
 
 
-def test_autodelete_removes_temp_files_without_asking(fake_run):
-    result = CliRunner().invoke(cli.main, [URL, "--autodelete"])
+def test_burn_lyrics_option_becomes_config(fake_run):
+    assert CliRunner().invoke(cli.main, [URL]).exit_code == 0
+    assert fake_run["config"].burn_lyrics is True
+    result = CliRunner().invoke(cli.main, [URL, "--no-burn-lyrics"])
     assert result.exit_code == 0, result.output
-    assert not fake_run["workspace"].source.exists()
-    assert fake_run["workspace"].final_video.exists()
+    assert fake_run["config"].burn_lyrics is False
 
 
-def test_prompt_accepted_removes_temp_files(fake_run):
-    result = CliRunner().invoke(cli.main, [URL], input="y\n")
+def test_browser_friendly_option_becomes_config(fake_run):
+    result = CliRunner().invoke(cli.main, [URL, "--browser-friendly"])
     assert result.exit_code == 0, result.output
-    assert not fake_run["workspace"].source.exists()
+    assert fake_run["config"].browser_friendly is True
 
 
-def test_prompt_declined_keeps_temp_files(fake_run):
-    result = CliRunner().invoke(cli.main, [URL], input="n\n")
+def test_musicbrainz_is_on_unless_switched_off(fake_run):
+    assert CliRunner().invoke(cli.main, [URL]).exit_code == 0
+    assert fake_run["config"].musicbrainz is True
+    result = CliRunner().invoke(cli.main, [URL, "--no-musicbrainz"])
+    assert result.exit_code == 0, result.output
+    assert fake_run["config"].musicbrainz is False
+
+
+def test_palette_option_becomes_config(fake_run):
+    result = CliRunner().invoke(cli.main, [URL, "--palette"])
+    assert result.exit_code == 0, result.output
+    assert fake_run["config"].palette is True
+
+
+def test_debug_ass_needs_burned_in_lyrics(fake_run):
+    result = CliRunner().invoke(cli.main, [URL, "--no-burn-lyrics", "--debug-ass"])
+    assert result.exit_code == 2
+    assert "--debug-ass" in result.output
+
+
+def test_temp_files_are_deleted_without_asking(fake_run):
+    ws = fake_run["workspace"]
+    ws.karaoke_lead.write_text("temp")
+    result = CliRunner().invoke(cli.main, [URL])
+    assert result.exit_code == 0, result.output
+    assert not ws.source.exists() and not ws.karaoke_lead.exists()
+    assert ws.final_video.exists()
+
+
+def test_keep_source_keeps_the_original_instead_of_the_download(fake_run):
+    ws = fake_run["workspace"]
+    ws.original_video.write_text("original")
+    result = CliRunner().invoke(cli.main, [URL, "--keep-source"])
+    assert result.exit_code == 0, result.output
+    assert fake_run["config"].keep_source is True
+    assert ws.original_video.exists() and not ws.source.exists()
+    assert "Original" in result.output
+
+
+def test_keep_temp_keeps_everything(fake_run):
+    result = CliRunner().invoke(cli.main, [URL, "--keep-temp"])
     assert result.exit_code == 0, result.output
     assert fake_run["workspace"].source.exists()
 
 
+def test_autodelete_is_still_accepted(fake_run):
+    result = CliRunner().invoke(cli.main, [URL, "--autodelete"])
+    assert result.exit_code == 0, result.output
+    assert not fake_run["workspace"].source.exists()
+
+
 def test_failed_run_exits_nonzero_and_keeps_files(fake_run):
     fake_run["ok"] = False
-    result = CliRunner().invoke(cli.main, [URL, "--autodelete"])
+    result = CliRunner().invoke(cli.main, [URL])
     assert result.exit_code == 1
     assert fake_run["workspace"].source.exists()

@@ -18,6 +18,7 @@ class Config:
     artist: str | None = None
     song: str | None = None
     language: str | None = None
+    musicbrainz: bool = True  # canonical artist and song names from MusicBrainz
     karaoke_model: str = DEFAULT_KARAOKE_MODEL
     whisper_model: str = DEFAULT_WHISPER_MODEL
     separation_overlap: int = DEFAULT_SEPARATION_OVERLAP
@@ -25,14 +26,18 @@ class Config:
     device: str = "auto"
     ffmpeg: str | None = None  # None: pick automatically from PATH
     gpu_jobs: int = 1
+    burn_lyrics: bool = True  # False: the video keeps its picture; the lyrics files are written either way
     darken: float = 0.08
     resolution: int = DEFAULT_RESOLUTION
     lead_volume: float = 0.0
+    browser_friendly: bool = False  # MP4 with H.264 + AAC; the video is copied when it already is H.264
     output_dir: Path = Path(".")
     model_dir: Path = DEFAULT_MODEL_DIR
     mix_vote: bool = False  # also transcribe the full mix and let both transcriptions vote
+    palette: bool = False  # find the video's dominant colours and write them to metadata.json
     debug_ass: bool = False  # render with words coloured by timing source
-    autodelete: bool = False
+    keep_temp: bool = False  # keep every temporary file (they are deleted after a successful run)
+    keep_source: bool = False  # also render the original video with its own sound, like the karaoke video
     force: bool = False
     verbose: bool = False
 

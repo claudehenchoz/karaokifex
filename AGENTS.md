@@ -11,7 +11,7 @@ word-by-word highlight). See README.md for user-facing usage, the step table and
   (`[tool.uv.sources]` in pyproject.toml); PyPI only has CPU wheels on Windows.
 - `uv run pytest`: the full suite takes about 1 s and needs no GPU, network or ffmpeg.
 - Single test: `uv run pytest tests/test_timing.py::test_repeated_chorus_matches_the_right_occurrence`
-- `uv run karaokifex <url> -a <artist> -s <song> [-l en] [-o <dir>] [--force] [--autodelete] [--debug-ass] [--mix-vote] [-v]`
+- `uv run karaokifex <url> -a <artist> -s <song> [-l en] [-o <dir>] [--force] [--keep-source] [--keep-temp] [--palette] [--debug-ass] [--mix-vote] [-v]`
 - `uv run karaokifex-eval <song folder>... [--recompute [--baseline]]`: word onset error against a
   `reference.ass`/`reference.lrc` in the folder. `--recompute` needs the folder's temp files and no GPU.
 - No linter or formatter is configured.
@@ -42,9 +42,9 @@ a GPU object must use `ctx.take("task")` rather than `ctx.result(...)`, and then
 (`gpu.free_gpu_memory()`); see `_transcribe` in pipeline.py.
 
 **Module roles.** `steps/` wraps one external tool per module (yt-dlp, ffmpeg, audio-separator, lrclib,
-whisperx). Heavy imports (torch, whisperx, audio_separator) happen *inside* functions. Keep it that
-way: CLI startup stays fast, and the tests never import them (test_transcription.py injects a fake
-`whisperx` module). The pure logic, where the tests concentrate, lives in:
+MusicBrainz, whisperx). Heavy imports (torch, whisperx, audio_separator) happen *inside* functions. Keep
+it that way: CLI startup stays fast, and the tests never import them (test_transcription.py injects a
+fake `whisperx` module). The pure logic, where the tests concentrate, lives in:
 - `timing.py`: times every lyric word. `plan_alignment` maps lrclib onto the video (`mapping.py`),
   derives each line's search window, and marks lines cut from the video. `align_lyrics` then takes, per
   word, the first available of: enhanced-LRC tag (`lrc-tag`), confident forced alignment (`forced`), a
@@ -59,7 +59,11 @@ way: CLI startup stays fast, and the tests never import them (test_transcription
   repo (lyrics are copyrighted); tests use made-up words only.
 - `ass.py`: `\kf` karaoke tags. Durations are differences of rounded absolute times, so the tags always
   sum to the line length. Lines alternate between an upper and a lower slot.
-- `metadata.py`: artist/song from yt-dlp metadata or the video title.
+- `metadata.py`: artist/song from yt-dlp metadata or the video title, plus the (artist, song) guesses
+  (`name_guesses`: every ordered pair of title parts) that `steps/musicbrainz.py` checks.
+- `palette.py`: `--palette`, deterministic k-means (fixed-seed k-means++) over frames that
+  `media.sample_frames` grabs with one fast seek each (dav1d ignores `-skip_frame nokey`, so decoding
+  only keyframes doesn't work); black bars are cropped first. Written to `metadata.json`.
 
 **Logging.** `runner.current_task` (a ContextVar set inside each worker) tags every log line with its
 task (`console.TaskLogHandler`). Some libraries install their own console handlers: `setup_logging`
@@ -87,7 +91,12 @@ harmless messages are dropped by `_DropKnownNoise`. `cli.py` sets `TQDM_DISABLE`
   subtitles filter can't handle Windows drive letters. Output is MKV: the source's codec if the GPU can
   encode it, otherwise the most efficient one it can (the RTX 3070 has no AV1 NVENC, so AV1 sources
   become HEVC). The bitrate is the source's, scaled by `BITRATE_FACTOR`, and the audio keeps the
-  source's codec (Opus).
+  source's codec (Opus). With `--no-burn-lyrics` nothing touches the picture (no eq, no subtitles), so
+  the video stream is copied unless `--resolution` forces an upscale; the lyrics files are still written.
+- **Browser-friendly** (`--browser-friendly`): MP4 with `+faststart`, H.264 High yuv420p (the only
+  format `choose_encoder` may pick then) and AAC. `SourceInfo.browser_ready` decides whether an untouched
+  picture can be copied. The download sorts `res,fps,vcodec:h264`, so H.264 wins only when it costs no
+  resolution or frame rate; YouTube's H.264 stops at 1080p, so bigger sources get encoded.
 - **yt-dlp** needs a JavaScript runtime for YouTube. Node is enabled via `js_runtimes` in `steps/download.py`.
 - **Language.** whisperx language auto-detection (first 30 s) is unreliable on singing (it heard Björk as
   Welsh). `-l/--language` forces the language; otherwise it is detected from the lyrics text (langdetect).
@@ -100,7 +109,17 @@ harmless messages are dropped by `_DropKnownNoise`. `cli.py` sets `TQDM_DISABLE`
   Phonetic matching (jellyfish metaphone; it has no double metaphone) applies to English only.
 - **VAD** is RMS thresholding on the clean karaoke stem, not silero/pyannote: deterministic and testable.
   numpy is therefore imported at CLI startup (via timing → mapping), which is acceptable.
+- **Names.** `prepare()` asks MusicBrainz (one recording search, all guesses OR-ed as phrase pairs, at
+  most 1 request/s with a contact in the User-Agent) before the folder is named. Only recordings whose
+  artist and title both match a guess count (`normalize_name`: case, accents, punctuation, a leading
+  "The", "&"/"and"); no confirmation keeps the heuristic guess, so offline runs still work. The artist
+  is the credited name (in the artist entry's spelling when only that differs), typographic
+  punctuation becomes plain. A lookup that changes its mind names a different folder, so a re-run
+  that must resume should pass `-a`/`-s`.
 - **Lyrics candidates.** `lyrics.json` stores up to 3 lrclib versions; `subtitles` aligns each and keeps
   the best `Alignment.quality`. `load_lyrics` still reads the old single-match format.
 - **Cleanup.** `Workspace.artifacts()` defines what survives cleanup, including karaoke videos from
-  earlier runs; everything else in the song folder is temporary.
+  earlier runs; everything else in the song folder is temporary. Temporary files are deleted after every
+  successful run without asking (`--keep-temp` keeps them); failed runs keep everything so they can
+  resume. `--keep-source` doesn't keep `source.mkv` itself: the `original` task renders it like the
+  karaoke video (same `media.render`, `copy_audio=True`) as `(Original).mkv`/`.mp4`, which is an artifact.

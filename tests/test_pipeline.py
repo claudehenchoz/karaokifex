@@ -1,7 +1,9 @@
 import json
 from dataclasses import replace
 
+import numpy as np
 import pytest
+import requests
 
 from karaokifex import pipeline
 from karaokifex.config import Config
@@ -37,6 +39,15 @@ def test_task_graph_is_valid_and_wired(job):
     assert set(tasks["render"].deps) == {"extract_video", "separate_karaoke", "subtitles"}
     assert tasks["render"].outputs == (job.workspace.final_video,)
     assert "transcribe_mix" not in tasks
+    assert "palette" not in tasks
+    assert "original" not in tasks
+
+
+def test_keep_source_renders_the_original_in_the_output_format(job):
+    job = replace(job, config=replace(job.config, keep_source=True, browser_friendly=True))
+    tasks = tasks_of(job)
+    assert set(tasks["original"].deps) == {"download", "extract_video"}
+    assert tasks["original"].outputs == (job.workspace.root / "Artist - Song (Original).mp4",)
 
 
 def test_mix_vote_and_debug_change_the_graph(job):
@@ -46,6 +57,76 @@ def test_mix_vote_and_debug_change_the_graph(job):
     assert "transcribe_mix" in tasks["subtitles"].deps
     assert job.workspace.transcript_mix_json in tasks["load_whisper"].outputs
     assert tasks["render"].outputs == (job.workspace.debug_video,)
+
+
+def test_without_burned_in_lyrics_the_render_does_not_wait_for_them(job):
+    job = replace(job, config=replace(job.config, burn_lyrics=False))
+    tasks = tasks_of(job)
+    assert set(tasks["render"].deps) == {"extract_video", "separate_karaoke"}
+    assert "subtitles" in tasks  # the lyrics files are still written
+    assert tasks["render"].outputs == (job.workspace.plain_video,)
+
+
+def test_browser_friendly_renders_an_mp4(job):
+    job = replace(job, config=replace(job.config, browser_friendly=True))
+    assert tasks_of(job)["render"].outputs == (job.workspace.final_video.with_suffix(".mp4"),)
+    job = replace(job, config=replace(job.config, burn_lyrics=False))
+    assert job.output_video.name == "Artist - Song (Karaoke, no lyrics).mp4"
+
+
+def test_palette_step_writes_the_dominant_colours(job, monkeypatch):
+    job = replace(job, config=replace(job.config, palette=True))
+    assert tasks_of(job)["palette"].deps == ("extract_video",)
+    frames = np.zeros((4, 36, 64, 3), dtype=np.uint8)
+    frames[:, :9], frames[:, 9:27] = (255, 0, 0), (0, 0, 255)  # the black rows below are a letterbox bar
+    monkeypatch.setattr(pipeline.media, "sample_frames", lambda video, **options: frames)
+    pipeline._palette(job, ctx=Ctx())
+    metadata = json.loads(job.workspace.metadata_json.read_text(encoding="utf-8"))
+    assert metadata["palette"] == {"frames": 4, "colors": [{"hex": "#0000ff", "rgb": [0, 0, 255], "weight": 0.6667},
+                                                           {"hex": "#ff0000", "rgb": [255, 0, 0], "weight": 0.3333}]}
+
+
+class Ctx:
+    def note(self, text):
+        pass
+
+
+class FakeResponse:
+    status_code = 200
+
+    def __init__(self, recordings):
+        self._recordings = recordings
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {"recordings": self._recordings}
+
+
+PUMPKINS = [{"title": "Mayonaise", "artist-credit": [{"name": "Smashing Pumpkins", "joinphrase": "",
+                                                      "artist": {"name": "The Smashing Pumpkins"}}]}]
+
+
+def test_canonical_names_come_from_musicbrainz(monkeypatch):
+    monkeypatch.setattr(pipeline.musicbrainz, "MIN_INTERVAL", 0.0)
+    info = VideoInfo(id="x", title='Smashing Pumpkins "Mayonaise"', uploader="ag4321")
+    guess = ("Smashing Pumpkins", "Mayonaise")
+    get = lambda url, **options: FakeResponse(PUMPKINS)  # noqa: E731
+    assert pipeline.canonical_names(info, None, None, guess, get=get) == ("The Smashing Pumpkins", "Mayonaise")
+    assert pipeline.canonical_names(info, None, "mayonaise", guess, get=get) == ("The Smashing Pumpkins", "mayonaise")
+    assert pipeline.canonical_names(info, None, None, guess, get=lambda url, **o: FakeResponse([])) == guess
+
+
+def test_canonical_names_fall_back_when_offline(monkeypatch):
+    monkeypatch.setattr(pipeline.musicbrainz, "MIN_INTERVAL", 0.0)
+
+    def offline(url, **options):
+        raise requests.ConnectionError("no network")
+
+    info = VideoInfo(id="x", title="Culture Beat - Mr. Vain")
+    assert pipeline.canonical_names(info, None, None, ("Culture Beat", "Mr. Vain"), get=offline) == \
+        ("Culture Beat", "Mr. Vain")
 
 
 WORDS = [TimedWord("hello", 5.0, 5.4), TimedWord("world", 5.5, 6.0), TimedWord("again", 8.0, 8.6)]

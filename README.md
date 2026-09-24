@@ -7,7 +7,13 @@ picture is slightly darkened, and the lyrics are burned in with a word-by-word h
 karaokifex "https://www.youtube.com/watch?v=..." --artist "Artist" --song "Song"
 ```
 
-Artist and song are optional. If you leave them out, they are taken from the video's metadata or title.
+Artist and song are optional. If you leave them out, they are taken from the video's metadata or title
+and checked against [MusicBrainz](https://musicbrainz.org), which also settles their spelling. Titles like
+`Say Anything • In Your Eyes • Peter Gabriel` or `Smashing Pumpkins "Mayonaise"` work too: every part of
+the title is tried as artist and as song, and the pair that MusicBrainz recordings confirm wins. When
+MusicBrainz isn't sure (or can't be reached), the names from the video are used as they are.
+`--no-musicbrainz` skips the lookup; names given with `--artist`/`--song` always win. The song folder and
+every file in it are named `Artist - Song` after the result.
 
 ## Installation
 
@@ -48,9 +54,11 @@ uv run karaokifex "https://www.youtube.com/watch?v=..."
 
 | Step               | Tool                                                            | Output                                      |
 |--------------------|-----------------------------------------------------------------|---------------------------------------------|
-| `download`         | yt-dlp, best video + best audio                                 | `source.mkv`                                |
+| `download`         | yt-dlp, best video + best audio (`--browser-friendly`: H.264 if as good) | `source.mkv`                       |
 | `extract_audio`    | ffmpeg                                                          | `audio.wav`                                 |
 | `extract_video`    | ffmpeg (stream copy)                                            | `video.mkv`                                 |
+| `original`         | only with `--keep-source`: the video with its own sound, made like the karaoke video | `<Artist - Song> (Original).mkv` |
+| `palette`          | only with `--palette`: the video's dominant colours (k-means over 32 sampled frames) | `metadata.json`        |
 | `separate_karaoke` | audio-separator, `mel_band_roformer_karaoke_gabox.ckpt`         | `stems/karaoke_backing.wav`, `stems/karaoke_lead.wav` |
 | `lyrics`           | lrclib.net, up to 3 versions (the one that fits the audio wins) | `lyrics.json`                               |
 | `load_whisper`     | whisperx model load (runs early, while everything else works)   | –                                           |
@@ -59,7 +67,7 @@ uv run karaokifex "https://www.youtube.com/watch?v=..."
 | `transcribe_mix`   | only with `--mix-vote`: whisperx on the full mix                | `transcript_mix.json`                       |
 | `force_align`      | lrclib → video time map, then wav2vec2 forced alignment of each lyric line | `forced.json`                    |
 | `subtitles`        | best timing source per word, snapped to the voice → karaoke ASS (`\kf` tags) | `lyrics.ass`, `lyrics.debug.ass`, `timings.json` |
-| `render`           | ffmpeg: darken, burn in subtitles, karaoke audio (GPU decode + NVENC) | `<Artist - Song> (Karaoke).mkv`       |
+| `render`           | ffmpeg: darken, burn in subtitles, karaoke audio (GPU decode + NVENC) | `<Artist - Song> (Karaoke).mkv` (or `.mp4`) |
 
 Each step starts as soon as its inputs exist, so the lyrics lookup, the download, and the whisperx model
 load all run at the same time. GPU-heavy steps take turns (`--gpu-jobs` raises that limit). A live task
@@ -67,9 +75,13 @@ board shows every step's state, and each log line is tagged with the step that w
 
 All files for a song go into a folder named `Artist - Song` in the current directory (or `--output-dir`).
 If you re-run the same command, any step whose output already exists is skipped, so a failed run picks
-up where it stopped (`--force` redoes everything). At the end, karaokifex asks before deleting the
-temporary files (`--autodelete` skips the question). It keeps the video, the ASS file, the karaoke audio
-track, and the lyrics.
+up where it stopped (`--force` redoes everything). After a successful run, karaokifex deletes the
+temporary files. It keeps the video, the ASS file, the karaoke audio track, the lyrics with their word
+timings (`timings.json`), and the video's metadata (`info.json`, `metadata.json`). `--keep-source` also
+keeps the original: the video with its own sound (vocals and all), as `<Artist - Song> (Original).mkv`.
+It is made like the karaoke video, in the same format and resolution (an MP4 with `--browser-friendly`),
+and its audio is copied when that format takes it. The raw download (`source.mkv`) is still deleted;
+`--keep-temp` keeps every file.
 
 ### How the words get their timing
 
@@ -99,10 +111,10 @@ Low-confidence words are underlined. `lyrics.debug.ass` is written on every run,
 `mpv video.mkv --sub-file=lyrics.debug.ass` shows the same thing without rendering.
 
 To measure timing, put a `reference.ass` (for example timed in Aegisub against the video) or an enhanced
-`reference.lrc` into a song folder and keep its temporary files. `karaokifex-eval <song folder>...` then
-reports the median word onset error and the share of words within 100/300 ms, per timing source.
-`--recompute` re-runs the alignment from the cached files (no GPU needed), and `--baseline` compares
-against whisper-only matching.
+`reference.lrc` into a song folder and keep its temporary files (`--keep-temp`).
+`karaokifex-eval <song folder>...` then reports the median word onset error and the share of words within
+100/300 ms, per timing source. `--recompute` re-runs the alignment from the cached files (no GPU needed),
+and `--baseline` compares against whisper-only matching.
 
 There is a single stem separation pass. The karaoke model's lead-vocal stem doubles as whisperx's input,
 which also keeps backing vocals out of the transcription. The Roformer model runs in half precision
@@ -113,12 +125,35 @@ Rendering decodes and encodes on the GPU (`-hwaccel cuda` + NVENC); only the dar
 filters run on the CPU. The default output height is 1080p: sources below 1080p are upscaled
 proportionally, while larger sources keep their original resolution. Use `--resolution` to choose a
 different minimum output height. The isolated lead vocal is omitted by default; use `--lead-volume`
-between 0 and 1 to mix it back into the karaoke audio. The output is an MKV, like the download. The
-video keeps the source's format when
-the GPU can encode it; otherwise it uses the most efficient format the GPU can encode. For example, an
-RTX 30xx can't encode AV1, so AV1 sources become HEVC. The bitrate follows the source's, scaled by how
-efficient the output format is, so the file ends up about the size of the original. The audio keeps
-the source's codec (usually Opus). PATH often holds several ffmpeg builds (ImageMagick ships an old one),
+between 0 and 1 to mix it back into the karaoke audio.
+
+`--no-burn-lyrics` leaves the picture as it is: no lyrics, no darkening. The video stream is then copied
+without re-encoding, unless the source is below `--resolution` and must be upscaled. The result is
+`<Artist - Song> (Karaoke, no lyrics).mkv`, and the lyrics are still written to `lyrics.ass` and
+`timings.json` (every word with its start and end), for a player that shows them itself.
+
+`--browser-friendly` writes an MP4 that every browser's `<video>` plays: H.264 (High profile, 8-bit
+4:2:0), AAC audio, and the index at the front of the file ("fast start"), so playback begins while it
+loads. The download then prefers H.264 whenever YouTube offers it at the best resolution and frame rate,
+so with `--no-burn-lyrics` the video is usually copied and only the audio is encoded: a render takes
+seconds. Burned-in lyrics, other formats (VP9, AV1) and upscaling mean an H.264 encode. A lower
+`--resolution` keeps small sources from being upscaled, and so from being re-encoded.
+
+`--palette` finds the video's five dominant colours and writes them to `metadata.json`, most common
+first, each with its share of the picture (black letterbox and pillarbox bars don't count):
+
+```
+{"palette": {"colors": [{"hex": "#282522", "rgb": [40, 37, 34], "weight": 0.2803}, ...], "frames": 32}}
+```
+
+The colours come from k-means over 32 small frames spread across the video, one fast seek each, so the
+step takes seconds and runs while the stems are separated.
+
+Without `--browser-friendly`, the output is an MKV, like the download. The video keeps the source's
+format when the GPU can encode it; otherwise it uses the most efficient format the GPU can encode. For
+example, an RTX 30xx can't encode AV1, so AV1 sources become HEVC. The bitrate follows the source's,
+scaled by how efficient the output format is, so the file ends up about the size of the original. The
+audio keeps the source's codec (usually Opus). PATH often holds several ffmpeg builds (ImageMagick ships an old one),
 so karaokifex test-drives each one and uses the first that has libass and can encode with NVENC. If none
 can, it falls back to x264 on the CPU at below-normal priority. Use `--ffmpeg` or `KARAOKIFEX_FFMPEG` to
 pick a specific one.
@@ -129,7 +164,7 @@ Run `karaokifex --help` for all options.
 
 ```
 src/karaokifex/
-  cli.py          command line (click), cleanup prompt
+  cli.py          command line (click), cleanup
   pipeline.py     the task graph: which step needs what
   runner.py       generic parallel dependency-graph runner
   console.py      rich logging + live task board
@@ -139,8 +174,10 @@ src/karaokifex/
   activity.py     when the lead vocals are audible (pure)
   ass.py          timed lines → karaoke ASS (pure)
   evaluate.py     karaokifex-eval: timing accuracy against a reference
-  metadata.py     artist/song from video metadata (pure)
-  steps/          one module per external tool: download, media, separation, lyrics, transcription
+  metadata.py     artist/song guesses from video metadata (pure)
+  palette.py      dominant colours of the video (pure)
+  steps/          one module per external tool: download, media, separation, lyrics, transcription,
+                  musicbrainz
 ```
 
 ## Development
