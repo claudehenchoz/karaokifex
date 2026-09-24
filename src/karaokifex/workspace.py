@@ -120,6 +120,11 @@ class Workspace:
     def debug_video(self) -> Path:
         return self.root / f"{sanitize_name(self.title)} (Karaoke debug).mkv"
 
+    @property
+    def plain_video(self) -> Path:
+        """The karaoke audio with the untouched picture: no lyrics burned in (--no-burn-lyrics)."""
+        return self.root / f"{sanitize_name(self.title)} (Karaoke, no lyrics).mkv"
+
     # --- cleanup -----------------------------------------------------------------
     def artifacts(self, *, keep_source: bool = False) -> frozenset[Path]:
         """Files worth keeping after a successful run — including karaoke videos from earlier runs.
@@ -127,8 +132,8 @@ class Workspace:
         Besides the video and its audio, that is the data describing it: the lyrics, their word
         timings and the video's metadata. `keep_source` also keeps the original download.
         """
-        earlier_renders = [*self.root.glob(f"{glob.escape(self.final_video.stem)}.*"),
-                           *self.root.glob(f"{glob.escape(self.debug_video.stem)}.*")]
+        earlier_renders = [path for video in (self.final_video, self.debug_video, self.plain_video)
+                           for path in self.root.glob(f"{glob.escape(video.stem)}.*")]
         keep = {self.final_video, self.subtitles, self.karaoke_backing, self.lyrics_json, self.timings_json,
                 self.info_json}
         if keep_source:

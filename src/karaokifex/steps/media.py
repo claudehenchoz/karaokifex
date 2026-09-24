@@ -222,28 +222,33 @@ def extract_video(source: Path, target: Path, *, binary: str = "ffmpeg", duratio
     partial.replace(target)
 
 
-def render(video: Path, audio: Path, subtitles: Path, target: Path, *, tool: FfmpegBinary, source: SourceInfo,
-           lead: Path | None = None, lead_volume: float = 0.0, darken: float = 0.08,
+def render(video: Path, audio: Path, subtitles: Path | None, target: Path, *, tool: FfmpegBinary,
+           source: SourceInfo, lead: Path | None = None, lead_volume: float = 0.0, darken: float = 0.08,
            target_height: int = 1080, duration: float | None = None,
            on_progress: ProgressCallback | None = None) -> str:
     """Darken the video, burn in the subtitles and pair it with the karaoke audio.
 
     Encodes to the source's video format at a comparable bitrate when the hardware allows, and
-    falls back to the CPU if the GPU encoder fails. Returns a description of the encoding.
+    falls back to the CPU if the GPU encoder fails. Without subtitles the picture is left as it
+    is: the video stream is copied, unless it must be upscaled. Returns a description of the encoding.
     """
+    audio_codec, audio_bitrate = audio_encoder(source.audio_format, tool)
+    options: dict[str, Any] = dict(lead=lead, lead_volume=lead_volume, darken=darken, target_height=target_height,
+                                   source_height=source.video_height, duration=duration, on_progress=on_progress)
+    if subtitles is None and not scale_filter(source.video_height, target_height):
+        log.info("source %s copied as it is, audio %s", source.video_format or "video", audio_codec)
+        _render(tool.path, None, None, (audio_codec, audio_bitrate), video, audio, None, target, **options)
+        return f"{source.video_format or 'video'} copied + {audio_codec}"
     attempts = [choose_encoder(source.video_format, tool)]
     if attempts[0].gpu:
         attempts.append(choose_encoder(source.video_format, tool, gpu=False))
-    audio_codec, audio_bitrate = audio_encoder(source.audio_format, tool)
     for index, encoder in enumerate(attempts):
         bitrate = target_bitrate(source, encoder.format)
         log.info("source %s at %s → %s at %s, audio %s", source.video_format or "unknown",
                  format_bitrate(source.video_bitrate), encoder.label, format_bitrate(bitrate), audio_codec)
         try:
             _render(tool.path, encoder, bitrate, (audio_codec, audio_bitrate), video, audio, subtitles, target,
-                lead=lead, lead_volume=lead_volume, darken=darken,
-                target_height=target_height, source_height=source.video_height,
-                duration=duration, on_progress=on_progress)
+                    **options)
             return f"{encoder.label} at {format_bitrate(bitrate)} + {audio_codec}"
         except FfmpegError as error:
             if index == len(attempts) - 1:
@@ -252,10 +257,11 @@ def render(video: Path, audio: Path, subtitles: Path, target: Path, *, tool: Ffm
     raise AssertionError("unreachable")
 
 
-def _render(binary: str, encoder: Encoder, bitrate: int | None, audio_encoding: tuple[str, str], video: Path,
-            audio: Path, subtitles: Path, target: Path, *, darken: float, duration: float | None,
-            lead: Path | None, lead_volume: float, target_height: int, source_height: int | None,
-            on_progress: ProgressCallback | None) -> None:
+def _render(binary: str, encoder: Encoder | None, bitrate: int | None, audio_encoding: tuple[str, str],
+            video: Path, audio: Path, subtitles: Path | None, target: Path, *, darken: float,
+            duration: float | None, lead: Path | None, lead_volume: float, target_height: int,
+            source_height: int | None, on_progress: ProgressCallback | None) -> None:
+    """One ffmpeg run. `encoder` None copies the video stream (no filters then); `subtitles` None burns in nothing."""
     # The subtitles filter chokes on Windows drive letters ("C:"), so ffmpeg runs
     # inside the output folder and gets every path relative to it.
     folder = target.parent
@@ -266,21 +272,23 @@ def _render(binary: str, encoder: Encoder, bitrate: int | None, audio_encoding: 
 
     # With a GPU encoder, decode on the GPU as well (ffmpeg falls back to the CPU if it can't).
     # Frames come back to system memory for the eq and subtitles filters, which only exist on the CPU.
-    decode = {"hwaccel": "cuda"} if encoder.gpu else {}
+    decode = {"hwaccel": "cuda"} if encoder is not None and encoder.gpu else {}
     picture = ffmpeg.input(relative(video), **decode).video
-    if scale_filter(source_height, target_height):
-        picture = picture.filter("scale", -2, target_height)
-    picture = picture.filter("eq", brightness=-darken).filter("subtitles", relative(subtitles))
+    if encoder is None:
+        video_options: dict[str, Any] = {"vcodec": "copy"}
+    else:
+        if scale_filter(source_height, target_height):
+            picture = picture.filter("scale", -2, target_height)
+        if subtitles is not None:
+            picture = picture.filter("eq", brightness=-darken).filter("subtitles", relative(subtitles))
+        video_options = {"vcodec": encoder.codec, "pix_fmt": "yuv420p", **encoder.options(bitrate)}
     sound = ffmpeg.input(relative(audio)).audio
     if lead is not None and lead_volume:
         lead_stream = ffmpeg.input(relative(lead)).audio.filter("volume", lead_volume)
         sound = ffmpeg.filter([sound, lead_stream], "amix", inputs=2, duration="first", dropout_transition=0)
     audio_codec, audio_bitrate = audio_encoding
-    stream = ffmpeg.output(
-        picture, sound, relative(partial),
-        vcodec=encoder.codec, acodec=audio_codec, audio_bitrate=audio_bitrate, pix_fmt="yuv420p", shortest=None,
-        **encoder.options(bitrate),
-    )
+    stream = ffmpeg.output(picture, sound, relative(partial), acodec=audio_codec, audio_bitrate=audio_bitrate,
+                           shortest=None, **video_options)
     run(stream, binary=binary, cwd=folder, duration=duration, on_progress=on_progress)
     partial.replace(target)
 

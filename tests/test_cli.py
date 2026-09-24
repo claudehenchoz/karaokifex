@@ -55,6 +55,20 @@ def test_lead_volume_option_becomes_config(fake_run):
     assert fake_run["config"].lead_volume == 0.35
 
 
+def test_burn_lyrics_option_becomes_config(fake_run):
+    assert CliRunner().invoke(cli.main, [URL]).exit_code == 0
+    assert fake_run["config"].burn_lyrics is True
+    result = CliRunner().invoke(cli.main, [URL, "--no-burn-lyrics"])
+    assert result.exit_code == 0, result.output
+    assert fake_run["config"].burn_lyrics is False
+
+
+def test_debug_ass_needs_burned_in_lyrics(fake_run):
+    result = CliRunner().invoke(cli.main, [URL, "--no-burn-lyrics", "--debug-ass"])
+    assert result.exit_code == 2
+    assert "--debug-ass" in result.output
+
+
 def test_temp_files_are_deleted_without_asking(fake_run):
     ws = fake_run["workspace"]
     ws.karaoke_lead.write_text("temp")

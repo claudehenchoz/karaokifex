@@ -1,3 +1,4 @@
+import ffmpeg
 import pytest
 
 from karaokifex.steps import media
@@ -94,3 +95,38 @@ def test_audio_follows_the_source_codec():
     assert media.audio_encoder("opus", RTX_3070) == ("libopus", "160k")
     assert media.audio_encoder("mp3", RTX_3070) == ("aac", "256k")
     assert media.audio_encoder("opus", FfmpegBinary()) == ("aac", "256k")  # no libopus in this build
+
+
+def fake_render(monkeypatch, tmp_path, subtitles, source, **options):
+    """Runs media.render with ffmpeg replaced; returns its description and the ffmpeg arguments."""
+    calls = []
+
+    def run(stream, *, binary, cwd, duration, on_progress):
+        calls.append(args := ffmpeg.compile(stream))
+        (cwd / args[-1]).write_text("x")
+
+    monkeypatch.setattr(media, "run", run)
+    description = media.render(tmp_path / "video.mkv", tmp_path / "backing.wav", subtitles, tmp_path / "out.mkv",
+                               tool=RTX_3070, source=source, **options)
+    return description, calls[-1]
+
+
+def test_render_burns_in_the_subtitles(monkeypatch, tmp_path):
+    description, args = fake_render(monkeypatch, tmp_path, tmp_path / "lyrics.ass", SourceInfo("h264", video_height=1080))
+    assert description.startswith("h264_nvenc")
+    graph = args[args.index("-filter_complex") + 1]
+    assert "eq=brightness=-0.08" in graph and "subtitles=lyrics.ass" in graph
+
+
+def test_render_without_subtitles_copies_the_video(monkeypatch, tmp_path):
+    description, args = fake_render(monkeypatch, tmp_path, None, SourceInfo("vp9", video_height=1080, audio_format="opus"))
+    assert description == "vp9 copied + libopus"
+    assert args[args.index("-vcodec") + 1] == "copy"
+    assert "-filter_complex" not in args and "-hwaccel" not in args
+
+
+def test_render_without_subtitles_still_upscales(monkeypatch, tmp_path):
+    description, args = fake_render(monkeypatch, tmp_path, None, SourceInfo("h264", video_height=720))
+    assert description.startswith("h264_nvenc")
+    graph = args[args.index("-filter_complex") + 1]
+    assert "scale=-2:1080" in graph and "subtitles" not in graph and "eq=" not in graph

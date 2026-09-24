@@ -87,7 +87,8 @@ harmless messages are dropped by `_DropKnownNoise`. `cli.py` sets `TQDM_DISABLE`
   subtitles filter can't handle Windows drive letters. Output is MKV: the source's codec if the GPU can
   encode it, otherwise the most efficient one it can (the RTX 3070 has no AV1 NVENC, so AV1 sources
   become HEVC). The bitrate is the source's, scaled by `BITRATE_FACTOR`, and the audio keeps the
-  source's codec (Opus).
+  source's codec (Opus). With `--no-burn-lyrics` nothing touches the picture (no eq, no subtitles), so
+  the video stream is copied unless `--resolution` forces an upscale; the lyrics files are still written.
 - **yt-dlp** needs a JavaScript runtime for YouTube. Node is enabled via `js_runtimes` in `steps/download.py`.
 - **Language.** whisperx language auto-detection (first 30 s) is unreliable on singing (it heard Björk as
   Welsh). `-l/--language` forces the language; otherwise it is detected from the lyrics text (langdetect).

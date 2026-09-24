@@ -115,12 +115,18 @@ Rendering decodes and encodes on the GPU (`-hwaccel cuda` + NVENC); only the dar
 filters run on the CPU. The default output height is 1080p: sources below 1080p are upscaled
 proportionally, while larger sources keep their original resolution. Use `--resolution` to choose a
 different minimum output height. The isolated lead vocal is omitted by default; use `--lead-volume`
-between 0 and 1 to mix it back into the karaoke audio. The output is an MKV, like the download. The
-video keeps the source's format when
-the GPU can encode it; otherwise it uses the most efficient format the GPU can encode. For example, an
-RTX 30xx can't encode AV1, so AV1 sources become HEVC. The bitrate follows the source's, scaled by how
-efficient the output format is, so the file ends up about the size of the original. The audio keeps
-the source's codec (usually Opus). PATH often holds several ffmpeg builds (ImageMagick ships an old one),
+between 0 and 1 to mix it back into the karaoke audio.
+
+`--no-burn-lyrics` leaves the picture as it is: no lyrics, no darkening. The video stream is then copied
+without re-encoding, unless the source is below `--resolution` and must be upscaled. The result is
+`<Artist - Song> (Karaoke, no lyrics).mkv`, and the lyrics are still written to `lyrics.ass` and
+`timings.json` (every word with its start and end), for a player that shows them itself.
+
+The output is an MKV, like the download. The video keeps the source's format when the GPU can encode
+it; otherwise it uses the most efficient format the GPU can encode. For example, an RTX 30xx can't encode
+AV1, so AV1 sources become HEVC. The bitrate follows the source's, scaled by how efficient the output
+format is, so the file ends up about the size of the original. The audio keeps the source's codec
+(usually Opus). PATH often holds several ffmpeg builds (ImageMagick ships an old one),
 so karaokifex test-drives each one and uses the first that has libass and can encode with NVENC. If none
 can, it falls back to x264 on the CPU at below-normal priority. Use `--ffmpeg` or `KARAOKIFEX_FFMPEG` to
 pick a specific one.

@@ -48,6 +48,14 @@ def test_mix_vote_and_debug_change_the_graph(job):
     assert tasks["render"].outputs == (job.workspace.debug_video,)
 
 
+def test_without_burned_in_lyrics_the_render_does_not_wait_for_them(job):
+    job = replace(job, config=replace(job.config, burn_lyrics=False))
+    tasks = tasks_of(job)
+    assert set(tasks["render"].deps) == {"extract_video", "separate_karaoke"}
+    assert "subtitles" in tasks  # the lyrics files are still written
+    assert tasks["render"].outputs == (job.workspace.plain_video,)
+
+
 WORDS = [TimedWord("hello", 5.0, 5.4), TimedWord("world", 5.5, 6.0), TimedWord("again", 8.0, 8.6)]
 
 

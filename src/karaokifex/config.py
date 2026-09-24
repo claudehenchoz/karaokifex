@@ -25,6 +25,7 @@ class Config:
     device: str = "auto"
     ffmpeg: str | None = None  # None: pick automatically from PATH
     gpu_jobs: int = 1
+    burn_lyrics: bool = True  # False: the video keeps its picture; the lyrics files are written either way
     darken: float = 0.08
     resolution: int = DEFAULT_RESOLUTION
     lead_volume: float = 0.0

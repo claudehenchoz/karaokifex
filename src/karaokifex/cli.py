@@ -50,8 +50,11 @@ log = logging.getLogger("karaokifex")
                    "burn in subtitles and encode on the GPU.")
 @click.option("--gpu-jobs", type=click.IntRange(min=1), default=1, show_default=True,
               help="How many GPU-heavy steps may run at the same time.")
+@click.option("--burn-lyrics/--no-burn-lyrics", default=True, show_default=True,
+              help="Burn the lyrics into the video. Without, the picture stays as it is (the video is copied "
+                   "unless it must be upscaled) and the lyrics are only written to lyrics.ass and timings.json.")
 @click.option("--darken", type=click.FloatRange(0, 1), default=0.08, show_default=True,
-              help="How much darker the video gets (brightness offset).")
+              help="How much darker the video gets behind the burned-in lyrics (brightness offset).")
 @click.option("--resolution", type=click.IntRange(min=144), default=DEFAULT_RESOLUTION, show_default=True,
               help="Minimum output height in pixels; smaller sources are upscaled proportionally.")
 @click.option("--lead-volume", type=click.FloatRange(0, 1), default=0.0, show_default=True,
@@ -78,6 +81,8 @@ log = logging.getLogger("karaokifex")
 def main(url: str, **options: object) -> None:
     """Turn the YouTube video at URL into a karaoke video with word-by-word highlighted lyrics."""
     config = Config(url=url, **options)  # type: ignore[arg-type]
+    if config.debug_ass and not config.burn_lyrics:
+        raise click.UsageError("--debug-ass burns in the lyrics; it can't be combined with --no-burn-lyrics.")
     setup_logging(config.verbose)
     try:
         result = run_pipeline(config)

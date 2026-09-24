@@ -9,6 +9,8 @@
 One separation pass yields both stems the rest needs: the backing track (for
 render) and the lead vocals (for transcription, vocal activity and forced
 alignment). With --mix-vote, `transcribe_mix` also transcribes the full mix.
+With --no-burn-lyrics, `render` doesn't wait for `subtitles`, which still writes
+the lyrics files.
 `probe` runs first on its own (its metadata names the song folder); the task
 runner handles the rest.
 """
@@ -70,6 +72,8 @@ class Job:
 
     @property
     def output_video(self) -> Path:
+        if not self.config.burn_lyrics:
+            return self.workspace.plain_video
         return self.workspace.debug_video if self.config.debug_ass else self.workspace.final_video
 
 
@@ -127,6 +131,12 @@ def build_tasks(job: Job) -> list[Task]:
                           deps=("extract_audio", "load_whisper", "lyrics", "transcribe"),
                           outputs=(ws.transcript_mix_json,), gpu=True, description="whisperx on the full mix"))
     subtitle_deps = ("lyrics", "transcribe", "vocal_activity", "force_align")
+    # Without burned-in lyrics the render doesn't wait for them; the subtitles step still writes the lyrics files.
+    render_deps = ("extract_video", "separate_karaoke") + (("subtitles",) if cfg.burn_lyrics else ())
+    if not cfg.burn_lyrics:
+        render_description = "karaoke audio, picture as it is (no lyrics burned in)"
+    else:
+        render_description = "darken, karaoke audio, burn in subtitles" + (" (debug colours)" if cfg.debug_ass else "")
     tasks += [
         Task("force_align", partial(_force_align, job), deps=("lyrics", "transcribe", "vocal_activity"),
              outputs=(ws.forced_json,), gpu=True, description="wav2vec2 alignment of the known lyrics"),
@@ -134,9 +144,8 @@ def build_tasks(job: Job) -> list[Task]:
              deps=subtitle_deps + (("transcribe_mix",) if cfg.mix_vote else ()),
              outputs=(ws.subtitles, ws.debug_subtitles, ws.timings_json),
              description="lyrics + word timings → karaoke ASS"),
-        Task("render", partial(_render, job), deps=("extract_video", "separate_karaoke", "subtitles"),
-             outputs=(job.output_video,), gpu=job.ffmpeg.gpu,
-             description="darken, karaoke audio, burn in subtitles" + (" (debug colours)" if cfg.debug_ass else "")),
+        Task("render", partial(_render, job), deps=render_deps, outputs=(job.output_video,), gpu=job.ffmpeg.gpu,
+             description=render_description),
     ]
     return tasks
 
@@ -344,7 +353,10 @@ def _render(job: Job, ctx: TaskContext) -> str:
     except (ffmpeg.Error, OSError) as error:
         log.warning("couldn't inspect the source video (%s) — encoding at constant quality", error)
         source = media.SourceInfo()
-    subtitles = ws.debug_subtitles if job.config.debug_ass else ws.subtitles
+    if not job.config.burn_lyrics:
+        subtitles = None
+    else:
+        subtitles = ws.debug_subtitles if job.config.debug_ass else ws.subtitles
     encoding = media.render(ws.video, ws.karaoke_backing, subtitles, job.output_video, tool=job.ffmpeg,
                             source=source, lead=ws.karaoke_lead, lead_volume=job.config.lead_volume,
                             darken=job.config.darken, target_height=job.config.resolution,
