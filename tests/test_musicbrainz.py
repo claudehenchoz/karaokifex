@@ -164,6 +164,15 @@ def test_genres_the_recording_votes_for_first():
     assert musicbrainz.top_genres(None, [], None) == ()
 
 
+def test_a_single_stray_vote_is_no_genre_unless_there_is_nothing_more():
+    recording = [{"name": "ballad", "count": 1}, {"name": "jazz", "count": 2}, {"name": "pop", "count": 2},
+                 {"name": "punk", "count": 1}]
+    artist = [{"name": "cabaret", "count": 2}, {"name": "chanson française", "count": 1}, {"name": "pop", "count": 1}]
+    assert musicbrainz.top_genres(recording, None, artist) == ("pop", "jazz", "cabaret")
+    assert musicbrainz.top_genres([{"name": "shoegaze", "count": 1}], None, [{"name": "dream pop", "count": 1}]) \
+        == ("shoegaze", "dream pop")
+
+
 def test_writers_once_each_with_every_role_and_the_language():
     work = {"language": "deu", "languages": ["deu"], "relations": [
         {"type": "composer", "artist": {"name": "Anna"}}, {"type": "lyricist", "artist": {"name": "Ben"}},

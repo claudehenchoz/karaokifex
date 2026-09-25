@@ -301,11 +301,18 @@ def first_year(recordings: Sequence[dict[str, Any]]) -> int | None:
 
 def top_genres(*lists: Sequence[dict[str, Any]] | None) -> tuple[str, ...]:
     """The genres voted most for the recording, then its album, then its artist (each weighed less):
-    those with at least a sixth of the leader's votes, MAX_GENRES at most."""
+    those with at least a sixth of the leader's votes, MAX_GENRES at most. A genre with a single vote
+    in all three counts only where none has more: one stray vote ("punk", on Édith Piaf's "Non, je ne
+    regrette rien") says nothing of the song."""
     votes: Counter[str] = Counter()
+    voters: Counter[str] = Counter()
     for weight, genres in zip((3, 2, 1), lists):
         for genre in genres or []:
-            votes[genre["name"]] += weight * int(genre.get("count") or 1)
+            count = int(genre.get("count") or 1)
+            votes[genre["name"]] += weight * count
+            voters[genre["name"]] += count
+    if max(voters.values(), default=0) > 1:
+        votes = Counter({name: n for name, n in votes.items() if voters[name] > 1})
     if not votes:
         return ()
     ranked = votes.most_common()
