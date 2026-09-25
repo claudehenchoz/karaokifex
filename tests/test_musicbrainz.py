@@ -112,6 +112,19 @@ def test_search_gives_up_eventually():
         musicbrainz.search("q", get=offline)
 
 
+def test_asks_again_without_brackets_when_nothing_is_confirmed():
+    queries = []
+
+    def get(url, params, **_):
+        queries.append(params["query"])
+        return Answer({"recordings": [rec("Nena", "99 Luftballons")] if len(queries) == 2 else []})
+
+    match = musicbrainz.lookup([("NENA", "99 Luftballons [1983]")], get=get)
+    assert (match.artist, match.song) == ("Nena", "99 Luftballons")
+    assert queries == ['(recording:"99 luftballons 1983" AND artist:"nena")',
+                       '(recording:"99 luftballons" AND artist:"nena")']
+
+
 # --- describe -------------------------------------------------------------------------
 
 BAND = {"id": "band", "name": "Band"}

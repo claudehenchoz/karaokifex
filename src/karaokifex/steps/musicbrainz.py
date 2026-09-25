@@ -72,10 +72,19 @@ class Match:
 
 def lookup(guesses: Sequence[tuple[str, str]], text: str | None = None, *, get: HttpGet = requests.get,
            timeout: float = 15) -> Match | None:
-    """The canonical names for the best-confirmed guess; `text` is a whole title that may hold both names."""
+    """The canonical names for the best-confirmed guess; `text` is a whole title that may hold both names.
+
+    When none is confirmed, the guesses are asked about again without what their song adds in
+    brackets ("99 Luftballons [1983]"), which MusicBrainz's titles seldom have.
+    """
     if not guesses and not text:
         return None
-    return best_match(search(build_query(guesses, text), get=get, timeout=timeout), guesses, text)
+    match = best_match(search(build_query(guesses, text), get=get, timeout=timeout), guesses, text)
+    bare = list(dict.fromkeys((artist, without_brackets(song)) for artist, song in guesses
+                              if without_brackets(song) and without_brackets(song) != song))
+    if match is None and bare:
+        match = best_match(search(build_query(bare), get=get, timeout=timeout), bare)
+    return match
 
 
 def build_query(guesses: Sequence[tuple[str, str]], text: str | None = None) -> str:
