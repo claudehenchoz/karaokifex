@@ -130,7 +130,9 @@ squares), and the backing is what is left of the song, at its level and fullness
 given several times: each model separates the song, and their leads are averaged (an ensemble), which the
 top of MVSEP's lead/back-vocals leaderboard does too. For example
 `--karaoke-model bs_roformer_karaoke_frazer_becruily.ckpt --karaoke-model bs_roformer_karaoke_anvuew.ckpt
---karaoke-model mel_band_roformer_karaoke_gabox.ckpt`.
+--karaoke-model mel_band_roformer_karaoke_gabox.ckpt`. Each model is a pass of its own: those three with
+`--overlap 8 --fp32` took about nine times as long to separate a song as the first of them alone with
+`--overlap 4` (6.6 minutes against 43 s on an RTX 4070 Ti), about five times as long for the whole song.
 
 Without its lead voice the song is quieter; `--match-loudness` brings the karaoke to the original's
 loudness (EBU R128), a limiter keeping its peaks under -1 dBFS, so switching between the two doesn't change
