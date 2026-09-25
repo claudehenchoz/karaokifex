@@ -154,9 +154,9 @@ def target_bitrate(source: SourceInfo, fmt: str) -> int | None:
     return round(source.video_bitrate * BITRATE_FACTOR[fmt] / BITRATE_FACTOR[source.video_format])
 
 
-def scale_filter(source_height: int | None, target_height: int) -> str | None:
-    """Return a proportional upscale filter when the source is below the target height."""
-    return f"scale=-2:{target_height}" if source_height and source_height < target_height else None
+def scale_filter(source_height: int | None, target_height: int | None) -> str | None:
+    """Return a proportional upscale filter when the source is below the target height (None: never)."""
+    return f"scale=-2:{target_height}" if source_height and target_height and source_height < target_height else None
 
 
 def audio_encoder(source_format: str | None, tool: FfmpegBinary, *, browser: bool = False) -> tuple[str, str]:
@@ -271,7 +271,7 @@ def sample_frames(video: Path, *, binary: str = "ffmpeg", ffprobe: str = "ffprob
 
 def render(video: Path, audio: Path, subtitles: Path | None, target: Path, *, tool: FfmpegBinary,
            source: SourceInfo, lead: Path | None = None, lead_volume: float = 0.0, darken: float = 0.08,
-           target_height: int = 1080, browser: bool = False, copy_audio: bool = False,
+           target_height: int | None = 1080, browser: bool = False, copy_audio: bool = False,
            duration: float | None = None, on_progress: ProgressCallback | None = None) -> str:
     """Darken the video, burn in the subtitles and pair it with the karaoke audio.
 
@@ -316,7 +316,7 @@ def render(video: Path, audio: Path, subtitles: Path | None, target: Path, *, to
 
 def _render(binary: str, encoder: Encoder | None, bitrate: int | None, audio_encoding: tuple[str, str | None],
             video: Path, audio: Path, subtitles: Path | None, target: Path, *, darken: float,
-            duration: float | None, lead: Path | None, lead_volume: float, target_height: int,
+            duration: float | None, lead: Path | None, lead_volume: float, target_height: int | None,
             source_height: int | None, browser: bool, on_progress: ProgressCallback | None) -> None:
     """One ffmpeg run. `encoder` None copies the video stream (no filters then); `subtitles` None burns in nothing."""
     # The subtitles filter chokes on Windows drive letters ("C:"), so ffmpeg runs

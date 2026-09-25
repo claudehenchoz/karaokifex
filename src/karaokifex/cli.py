@@ -54,18 +54,21 @@ log = logging.getLogger("karaokifex")
 @click.option("--gpu-jobs", type=click.IntRange(min=1), default=1, show_default=True,
               help="How many GPU-heavy steps may run at the same time.")
 @click.option("--burn-lyrics/--no-burn-lyrics", default=True, show_default=True,
-              help="Burn the lyrics into the video. Without, the picture stays as it is (the video is copied "
-                   "unless it must be upscaled) and the lyrics are only written to lyrics.ass and timings.json.")
+              help="Burn the lyrics into the video. Without, the picture stays as it is (the video is copied, "
+                   "not upscaled unless --upscale) and the lyrics are only written to lyrics.ass and timings.json.")
 @click.option("--darken", type=click.FloatRange(0, 1), default=0.08, show_default=True,
               help="How much darker the video gets behind the burned-in lyrics (brightness offset).")
 @click.option("--resolution", type=click.IntRange(min=144), default=DEFAULT_RESOLUTION, show_default=True,
-              help="Minimum output height in pixels; smaller sources are upscaled proportionally.")
+              help="Minimum output height in pixels when upscaling; smaller sources are upscaled proportionally.")
+@click.option("--upscale/--no-upscale", default=None,
+              help="Scale sources below --resolution up to it. Default: only when the lyrics are burned in; "
+                   "with --no-burn-lyrics the picture keeps its own size.")
 @click.option("--lead-volume", type=click.FloatRange(0, 1), default=0.0, show_default=True,
               help="Mix the isolated lead vocal back into the karaoke audio (0 = no voice, 1 = full volume).")
 @click.option("--browser-friendly", is_flag=True,
               help="Write an MP4 that every browser plays: H.264, AAC, fast start. The download prefers H.264, "
-                   "and with --no-burn-lyrics such a video is copied instead of re-encoded (upscaling to "
-                   "--resolution still re-encodes).")
+                   "and with --no-burn-lyrics such a video is copied instead of re-encoded (--upscale "
+                   "still re-encodes).")
 @click.option("-o", "--output-dir", type=click.Path(file_okay=False, path_type=Path), default=Path("."),
               show_default=True, help="Where the per-song folder is created.")
 @click.option("--model-dir", type=click.Path(file_okay=False, path_type=Path), default=DEFAULT_MODEL_DIR,

@@ -29,6 +29,7 @@ class Config:
     burn_lyrics: bool = True  # False: the video keeps its picture; the lyrics files are written either way
     darken: float = 0.08
     resolution: int = DEFAULT_RESOLUTION
+    upscale: bool | None = None  # scale a source below `resolution` up to it; None: only with burned-in lyrics
     lead_volume: float = 0.0
     browser_friendly: bool = False  # MP4 with H.264 + AAC; the video is copied when it already is H.264
     output_dir: Path = Path(".")
@@ -42,6 +43,16 @@ class Config:
     keep_source: bool = False  # also render the original video with its own sound, like the karaoke video
     force: bool = False
     verbose: bool = False
+
+    @property
+    def target_height(self) -> int | None:
+        """The height a smaller source is scaled up to, or None to keep every source's own size.
+
+        Upscaling is for burned-in lyrics, which need the lines to render them sharply. Without
+        them the picture is left as it is -- copied where it can be -- and the player scales it.
+        """
+        upscale = self.burn_lyrics if self.upscale is None else self.upscale
+        return self.resolution if upscale else None
 
     def resolve_device(self) -> str:
         if self.device != "auto":

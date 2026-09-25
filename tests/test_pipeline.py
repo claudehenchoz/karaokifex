@@ -196,3 +196,11 @@ def test_quality_reads_the_download_before_it_goes(job):
     task = tasks_of(measured)["quality"]
     assert task.deps == ("download", "render", "original") and task.outputs == (job.workspace.quality_json,)
     assert job.workspace.quality_json in job.workspace.artifacts()
+
+
+def test_upscaling_is_for_burned_in_lyrics(job):
+    config = job.config
+    assert config.burn_lyrics and config.target_height == config.resolution
+    assert replace(config, burn_lyrics=False).target_height is None
+    assert replace(config, burn_lyrics=False, upscale=True).target_height == config.resolution
+    assert replace(config, upscale=False).target_height is None

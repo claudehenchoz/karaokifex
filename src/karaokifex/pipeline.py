@@ -473,7 +473,7 @@ def _original(job: Job, ctx: TaskContext) -> str:
     """The download in the output format: the same picture treatment as the karaoke video, the source's own sound."""
     ws = job.workspace
     encoding = media.render(ws.video, ws.source, None, job.original_video, tool=job.ffmpeg, source=_source_info(job),
-                            target_height=job.config.resolution, browser=job.config.browser_friendly,
+                            target_height=job.config.target_height, browser=job.config.browser_friendly,
                             copy_audio=True, duration=job.info.duration, on_progress=ctx.progress)
     size = job.original_video.stat().st_size / 1_048_576
     log.info("wrote %s (%.0f MiB) with %s", job.original_video.name, size, encoding)
@@ -489,7 +489,7 @@ def _render(job: Job, ctx: TaskContext) -> str:
         subtitles = ws.debug_subtitles if job.config.debug_ass else ws.subtitles
     encoding = media.render(ws.video, ws.karaoke_backing, subtitles, job.output_video, tool=job.ffmpeg,
                             source=source, lead=ws.karaoke_lead, lead_volume=job.config.lead_volume,
-                            darken=job.config.darken, target_height=job.config.resolution,
+                            darken=job.config.darken, target_height=job.config.target_height,
                             browser=job.config.browser_friendly, duration=job.info.duration,
                             on_progress=ctx.progress)
     size = job.output_video.stat().st_size / 1_048_576

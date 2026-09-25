@@ -92,7 +92,8 @@ harmless messages are dropped by `_DropKnownNoise`. `cli.py` sets `TQDM_DISABLE`
   encode it, otherwise the most efficient one it can (the RTX 3070 has no AV1 NVENC, so AV1 sources
   become HEVC). The bitrate is the source's, scaled by `BITRATE_FACTOR`, and the audio keeps the
   source's codec (Opus). With `--no-burn-lyrics` nothing touches the picture (no eq, no subtitles), so
-  the video stream is copied unless `--resolution` forces an upscale; the lyrics files are still written.
+  the video stream is copied and not upscaled (`Config.target_height` is None unless `--upscale`); the
+  lyrics files are still written.
 - **Browser-friendly** (`--browser-friendly`): MP4 with `+faststart`, H.264 High yuv420p (the only
   format `choose_encoder` may pick then) and AAC. `SourceInfo.browser_ready` decides whether an untouched
   picture can be copied. The download sorts `res,fps,vcodec:h264`, so H.264 wins only when it costs no

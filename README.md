@@ -122,13 +122,15 @@ with an overlap of 2, about 4.6× faster than audio-separator's defaults (fp32, 
 on an RTX 3070. `--overlap 8 --fp32` restores those defaults if you want the last bit of quality.
  
 Rendering decodes and encodes on the GPU (`-hwaccel cuda` + NVENC); only the darkening and subtitle
-filters run on the CPU. The default output height is 1080p: sources below 1080p are upscaled
-proportionally, while larger sources keep their original resolution. Use `--resolution` to choose a
-different minimum output height. The isolated lead vocal is omitted by default; use `--lead-volume`
+filters run on the CPU. With burned-in lyrics the default output height is 1080p: sources below
+1080p are upscaled proportionally, so the lyrics render sharply, while larger sources keep their
+original resolution. Use `--resolution` to choose a different minimum output height. The isolated lead vocal is omitted by default; use `--lead-volume`
 between 0 and 1 to mix it back into the karaoke audio.
 
-`--no-burn-lyrics` leaves the picture as it is: no lyrics, no darkening. The video stream is then copied
-without re-encoding, unless the source is below `--resolution` and must be upscaled. The result is
+`--no-burn-lyrics` leaves the picture as it is: no lyrics, no darkening, and no upscaling -- the player
+scales the picture anyway. The video stream is then copied without re-encoding. `--upscale` scales a
+smaller source up to `--resolution` even so, and `--no-upscale` keeps every source's size with burned-in
+lyrics too. The result is
 `<Artist - Song> (Karaoke, no lyrics).mkv`, and the lyrics are still written to `lyrics.ass` and
 `timings.json` (every word with its start and end), for a player that shows them itself.
 
@@ -136,8 +138,7 @@ without re-encoding, unless the source is below `--resolution` and must be upsca
 4:2:0), AAC audio, and the index at the front of the file ("fast start"), so playback begins while it
 loads. The download then prefers H.264 whenever YouTube offers it at the best resolution and frame rate,
 so with `--no-burn-lyrics` the video is usually copied and only the audio is encoded: a render takes
-seconds. Burned-in lyrics, other formats (VP9, AV1) and upscaling mean an H.264 encode. A lower
-`--resolution` keeps small sources from being upscaled, and so from being re-encoded.
+seconds. Burned-in lyrics, other formats (VP9, AV1) and upscaling mean an H.264 encode.
 
 `--palette` finds the video's five dominant colours and writes them to `metadata.json`, most common
 first, each with its share of the picture (black letterbox and pillarbox bars don't count):

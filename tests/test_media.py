@@ -78,7 +78,7 @@ def test_target_bitrate_scales_with_format_efficiency():
 
 @pytest.mark.parametrize(
     ("source_height", "target_height", "expected"),
-    [(720, 1080, "scale=-2:1080"), (1080, 1080, None), (2160, 1080, None), (None, 1080, None)],
+    [(720, 1080, "scale=-2:1080"), (1080, 1080, None), (2160, 1080, None), (None, 1080, None), (720, None, None)],
 )
 def test_scale_filter_only_upsamples_smaller_sources(source_height, target_height, expected):
     assert media.scale_filter(source_height, target_height) == expected
