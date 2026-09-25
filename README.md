@@ -72,8 +72,11 @@ uv run karaokifex "https://www.youtube.com/watch?v=..."
 | `render`           | ffmpeg: darken, burn in subtitles, karaoke audio (GPU decode + NVENC) | `<Artist - Song> (Karaoke).mkv` (or `.mp4`) |
 
 Each step starts as soon as its inputs exist, so the lyrics lookup, the download, and the whisperx model
-load all run at the same time. GPU-heavy steps take turns (`--gpu-jobs` raises that limit). A live task
-board shows every step's state, and each log line is tagged with the step that wrote it.
+load all run at the same time. GPU-heavy steps take turns (`--gpu-jobs` raises that limit). Songs made at
+once on one machine can share a lock file (`--gpu-lock`, or `KARAOKIFEX_GPU_LOCK`): their separation,
+transcription and alignment then take turns on the GPU too, instead of filling its memory together, while
+one song's download or render overlaps another's models. A live task board shows every step's state, and
+each log line is tagged with the step that wrote it.
 
 All files for a song go into a folder named `Artist - Song` in the current directory (or `--output-dir`).
 If you re-run the same command, any step whose output already exists is skipped, so a failed run picks

@@ -54,6 +54,10 @@ log = logging.getLogger("karaokifex")
                    "burn in subtitles and encode on the GPU.")
 @click.option("--gpu-jobs", type=click.IntRange(min=1), default=1, show_default=True,
               help="How many GPU-heavy steps may run at the same time.")
+@click.option("--gpu-lock", envvar="KARAOKIFEX_GPU_LOCK", type=click.Path(dir_okay=False, path_type=Path),
+              help="A lock file shared by several karaokifex runs on one machine (env: KARAOKIFEX_GPU_LOCK): "
+                   "their separation, transcription and alignment take turns on the GPU instead of filling "
+                   "its memory together; downloads and renders still overlap.")
 @click.option("--burn-lyrics/--no-burn-lyrics", default=True, show_default=True,
               help="Burn the lyrics into the video. Without, the picture stays as it is (the video is copied, "
                    "not upscaled unless --upscale) and the lyrics are only written to lyrics.ass and timings.json.")

@@ -159,17 +159,17 @@ def build_tasks(job: Job) -> list[Task]:
         Task("extract_video", partial(_extract_video, job), deps=("download",), outputs=(ws.video,),
              description="ffmpeg → video.mkv (no audio)"),
         Task("separate_karaoke", partial(_separate_karaoke, job), deps=("extract_audio",),
-             outputs=(ws.karaoke_backing, ws.karaoke_lead), gpu=True, description=" + ".join(cfg.karaoke_models)),
+             outputs=(ws.karaoke_backing, ws.karaoke_lead), gpu=True, model=True, description=" + ".join(cfg.karaoke_models)),
         Task("vocal_activity", partial(_vocal_activity, job), deps=("separate_karaoke",),
              outputs=(ws.lead_activity,), description="when the lead vocals are audible"),
         Task("transcribe", partial(_transcribe, job), deps=("separate_karaoke", "load_whisper", "lyrics"),
-             outputs=(ws.transcript_json,), gpu=True, description="whisperx on the lead vocals"),
+             outputs=(ws.transcript_json,), gpu=True, model=True, description="whisperx on the lead vocals"),
     ]
     if cfg.mix_vote:
         # Depends on transcribe so it can take over the loaded model instead of loading it twice.
         tasks.append(Task("transcribe_mix", partial(_transcribe_mix, job),
                           deps=("extract_audio", "load_whisper", "lyrics", "transcribe"),
-                          outputs=(ws.transcript_mix_json,), gpu=True, description="whisperx on the full mix"))
+                          outputs=(ws.transcript_mix_json,), gpu=True, model=True, description="whisperx on the full mix"))
     if cfg.keep_source:
         tasks.append(Task("original", partial(_original, job), deps=("download", "extract_video"),
                           outputs=(job.original_video,), gpu=job.ffmpeg.gpu,
@@ -193,7 +193,7 @@ def build_tasks(job: Job) -> list[Task]:
         render_description = "darken, karaoke audio, burn in subtitles" + (" (debug colours)" if cfg.debug_ass else "")
     tasks += [
         Task("force_align", partial(_force_align, job), deps=("lyrics", "transcribe", "vocal_activity"),
-             outputs=(ws.forced_json,), gpu=True, description="wav2vec2 alignment of the known lyrics"),
+             outputs=(ws.forced_json,), gpu=True, model=True, description="wav2vec2 alignment of the known lyrics"),
         Task("subtitles", partial(_subtitles, job),
              deps=subtitle_deps + (("transcribe_mix",) if cfg.mix_vote else ()),
              outputs=(ws.subtitles, ws.debug_subtitles, ws.timings_json),
@@ -209,7 +209,7 @@ def run_pipeline(config: Config) -> PipelineResult:
     tasks = build_tasks(job)
     register_tasks(task.name for task in tasks)
     board = TaskBoard(job.title, [(task.name, task.description) for task in tasks])
-    runner = TaskRunner(tasks, gpu_slots=config.gpu_jobs, force=config.force, observer=board)
+    runner = TaskRunner(tasks, gpu_slots=config.gpu_jobs, gpu_lock=config.gpu_lock, force=config.force, observer=board)
     with Live(board, console=console, refresh_per_second=8):
         report = runner.run()
     return PipelineResult(job, report)
