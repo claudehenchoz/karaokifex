@@ -92,7 +92,7 @@ def main(folders: tuple[Path, ...], floor: float, dry: bool, binary: str) -> Non
         for path in renders.values():
             try:
                 relevel(path, gain, binary=binary)
-            except subprocess.CalledProcessError as error:
+            except (subprocess.CalledProcessError, OSError) as error:   # OSError: a file being played can't be replaced
                 log.warning("%s: %s could not be lifted (%s)", folder.name, path.name, error)
 
 
