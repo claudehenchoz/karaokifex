@@ -90,7 +90,7 @@ log = logging.getLogger("karaokifex")
 @click.option("--lift-quiet/--no-lift-quiet", default=True, show_default=True,
               help="Lift a song mastered quieter than --quiet-floor up to it, by at most 12 dB, the original and "
                    "the karaoke alike, its peaks kept under -1 dBFS. Louder songs are left as they are.")
-@click.option("--quiet-floor", type=float, default=-16.0, show_default=True,
+@click.option("--quiet-floor", type=float, default=-12.0, show_default=True,
               help="The loudness (EBU R128 LUFS) a song quieter than is lifted to it, with --lift-quiet.")
 @click.option("--describe", is_flag=True,
               help="Look up what MusicBrainz knows of the song -- the album it first came out on, the year, its "

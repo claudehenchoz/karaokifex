@@ -1,9 +1,9 @@
 """How loud a song comes out: the karaoke matched to the song (--match-loudness), a song too quiet lifted.
 
-    karaokifex-lift <song folder>... [--floor -16] [--dry]
+    karaokifex-lift <song folder>... [--floor -12] [--dry]
 
-Some songs, old masters mostly, are mastered far quieter than the rest (-20 LUFS and below where
-most sit near -10), so they play noticeably softer. --lift-quiet, on by default, brings a song
+Some songs, old masters mostly, are mastered far quieter than the rest (-17 LUFS and below where
+most sit between -8 and -14), so they play noticeably softer. --lift-quiet, on by default, brings a song
 quieter than QUIET_FLOOR up to it, by at most MOST dB, the original and the karaoke alike, so
 switching between them keeps the level; the render's limiter keeps the peaks under -1 dBFS.
 Louder songs are left as they are. `gains()` is the arithmetic; `main` lifts songs made before
@@ -20,7 +20,7 @@ import click
 
 log = logging.getLogger("karaokifex")
 
-QUIET_FLOOR = -16.0   # LUFS: a song quieter than this is lifted to it
+QUIET_FLOOR = -12.0   # LUFS: a song quieter than this is lifted to it, a couple of dB under most songs
 MOST = 12.0           # dB: the most a song is lifted
 
 

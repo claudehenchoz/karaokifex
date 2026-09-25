@@ -41,7 +41,7 @@ class Config:
     quality: bool = False  # the source's and the renders' resolution, frame rate, codecs and bitrates, in quality.json
     match_loudness: bool = False  # the karaoke brought to the original's loudness (EBU R128), peaks under -1 dBFS
     lift_quiet: bool = True  # a song quieter than quiet_floor lifted to it, the original and the karaoke alike (level.py)
-    quiet_floor: float = -16.0  # LUFS
+    quiet_floor: float = -12.0  # LUFS
     debug_ass: bool = False  # render with words coloured by timing source
     keep_temp: bool = False  # keep every temporary file (they are deleted after a successful run)
     keep_source: bool = False  # also render the original video with its own sound, like the karaoke video

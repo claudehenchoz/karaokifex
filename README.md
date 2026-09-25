@@ -141,9 +141,9 @@ Without its lead voice the song is quieter; `--match-loudness` brings the karaok
 loudness (EBU R128), a limiter keeping its peaks under -1 dBFS, so switching between the two doesn't change
 the level.
 
-Some songs, old masters mostly, are mastered far quieter than the rest (-20 LUFS and below, where most sit
-near -10) and play noticeably softer. `--lift-quiet`, on by default, lifts a song quieter than `--quiet-floor`
-(-16 LUFS) up to it, by at most 12 dB, the original and the karaoke alike, the same limiter keeping the peaks
+Some songs, old masters mostly, are mastered far quieter than the rest (-17 LUFS and below, where most sit
+between -8 and -14) and play noticeably softer. `--lift-quiet`, on by default, lifts a song quieter than
+`--quiet-floor` (-12 LUFS, a couple of dB under most songs) up to it, by at most 12 dB, the original and the karaoke alike, the same limiter keeping the peaks
 under -1 dBFS; louder songs are left as they are (`--no-lift-quiet` turns it off). A quiet song's original is
 then re-encoded rather than having its sound copied. `karaokifex-lift <song folder>... [--dry]` does the same
 for songs made before it: both renders' sound lifted by the same amount, the picture copied.
