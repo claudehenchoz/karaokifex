@@ -113,6 +113,21 @@ class Workspace:
         return self.root / "lyrics.debug.ass"
 
     @property
+    def metadata_json(self) -> Path:
+        """What karaokifex finds out about the video itself (--palette: its dominant colours)."""
+        return self.root / "metadata.json"
+
+    @property
+    def song_json(self) -> Path:
+        """What is known of the song itself (--describe): album, year, genres, writers, language."""
+        return self.root / "song.json"
+
+    @property
+    def quality_json(self) -> Path:
+        """How good the picture and sound are (--quality): the source's and each render's streams."""
+        return self.root / "quality.json"
+
+    @property
     def final_video(self) -> Path:
         return self.root / f"{sanitize_name(self.title)} (Karaoke).mkv"
 
@@ -120,12 +135,28 @@ class Workspace:
     def debug_video(self) -> Path:
         return self.root / f"{sanitize_name(self.title)} (Karaoke debug).mkv"
 
+    @property
+    def plain_video(self) -> Path:
+        """The karaoke audio with the untouched picture: no lyrics burned in (--no-burn-lyrics)."""
+        return self.root / f"{sanitize_name(self.title)} (Karaoke, no lyrics).mkv"
+
+    @property
+    def original_video(self) -> Path:
+        """The video with its own sound, the song as released, made like the karaoke video (--keep-source)."""
+        return self.root / f"{sanitize_name(self.title)} (Original).mkv"
+
     # --- cleanup -----------------------------------------------------------------
     def artifacts(self) -> frozenset[Path]:
-        """Files worth keeping after a successful run — including karaoke videos from earlier runs."""
-        earlier_renders = [*self.root.glob(f"{glob.escape(self.final_video.stem)}.*"),
-                           *self.root.glob(f"{glob.escape(self.debug_video.stem)}.*")]
-        keep = {self.final_video, self.subtitles, self.karaoke_backing, self.lyrics_json}
+        """Files worth keeping after a successful run — including videos rendered by earlier runs.
+
+        Besides the videos and the karaoke audio, that is the data describing them: the lyrics,
+        their word timings and the video's metadata. The download itself is temporary; the
+        original survives as `original_video` (--keep-source).
+        """
+        videos = (self.final_video, self.debug_video, self.plain_video, self.original_video)
+        earlier_renders = [path for video in videos for path in self.root.glob(f"{glob.escape(video.stem)}.*")]
+        keep = {self.final_video, self.subtitles, self.karaoke_backing, self.lyrics_json, self.timings_json,
+                self.info_json, self.metadata_json, self.song_json, self.quality_json}
         return frozenset(keep | {p for p in earlier_renders if ".partial." not in p.name})
 
     def temp_files(self) -> list[Path]:

@@ -18,23 +18,45 @@ class Config:
     artist: str | None = None
     song: str | None = None
     language: str | None = None
-    karaoke_model: str = DEFAULT_KARAOKE_MODEL
+    musicbrainz: bool = True  # canonical artist and song names from MusicBrainz
+    karaoke_models: tuple[str, ...] = (DEFAULT_KARAOKE_MODEL,)  # several: their lead vocals are averaged
     whisper_model: str = DEFAULT_WHISPER_MODEL
     separation_overlap: int = DEFAULT_SEPARATION_OVERLAP
     fp16: bool = True
     device: str = "auto"
     ffmpeg: str | None = None  # None: pick automatically from PATH
     gpu_jobs: int = 1
+    gpu_lock: Path | None = None  # a lock file shared with other runs: their models take turns on the GPU
+    burn_lyrics: bool = True  # False: the video keeps its picture; the lyrics files are written either way
     darken: float = 0.08
     resolution: int = DEFAULT_RESOLUTION
+    upscale: bool | None = None  # scale a source below `resolution` up to it; None: only with burned-in lyrics
     lead_volume: float = 0.0
+    browser_friendly: bool = False  # MP4 with H.264 + AAC; the video is copied when it already is H.264
     output_dir: Path = Path(".")
     model_dir: Path = DEFAULT_MODEL_DIR
     mix_vote: bool = False  # also transcribe the full mix and let both transcriptions vote
+    palette: bool = False  # find the video's dominant colours and write them to metadata.json
+    describe: bool = False  # the song's album, year, genres, writers and language, from MusicBrainz, in song.json
+    quality: bool = False  # the source's and the renders' resolution, frame rate, codecs and bitrates, in quality.json
+    match_loudness: bool = False  # the karaoke brought to the original's loudness (EBU R128), peaks under -1 dBFS
+    lift_quiet: bool = True  # a song quieter than quiet_floor lifted to it, the original and the karaoke alike (level.py)
+    quiet_floor: float = -12.0  # LUFS
     debug_ass: bool = False  # render with words coloured by timing source
-    autodelete: bool = False
+    keep_temp: bool = False  # keep every temporary file (they are deleted after a successful run)
+    keep_source: bool = False  # also render the original video with its own sound, like the karaoke video
     force: bool = False
     verbose: bool = False
+
+    @property
+    def target_height(self) -> int | None:
+        """The height a smaller source is scaled up to, or None to keep every source's own size.
+
+        Upscaling is for burned-in lyrics, which need the lines to render them sharply. Without
+        them the picture is left as it is -- copied where it can be -- and the player scales it.
+        """
+        upscale = self.burn_lyrics if self.upscale is None else self.upscale
+        return self.resolution if upscale else None
 
     def resolve_device(self) -> str:
         if self.device != "auto":

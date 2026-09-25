@@ -5,14 +5,17 @@ from __future__ import annotations
 import functools
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 import ffmpeg
+import numpy as np
 
 from karaokifex.workspace import partial_path
 
@@ -28,8 +31,12 @@ CPU_ENCODERS = {"av1": "libsvtav1", "hevc": "libx265", "h264": "libx264"}
 BITRATE_FACTOR = {"av1": 1.0, "vp9": 1.3, "hevc": 1.3, "h264": 1.8}
 # Audio encoder and bitrate per source audio codec; anything else becomes AAC.
 AUDIO_ENCODERS = {"opus": ("libopus", "160k"), "aac": ("aac", "256k")}
+# H.264 that every browser's <video> plays (with AAC audio, in an MP4): 8-bit 4:2:0 in one of these profiles.
+BROWSER_PROFILES = frozenset({"Constrained Baseline", "Baseline", "Main", "High"})
 
 _SOFTWARE_ENCODERS = frozenset({*CPU_ENCODERS.values(), "libopus", "aac"})
+# Below-normal priority keeps the desktop responsive while ffmpeg crunches.
+_BELOW_NORMAL = subprocess.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 0
 
 
 @dataclass(frozen=True)
@@ -90,6 +97,13 @@ class SourceInfo:
     audio_format: str | None = None
     video_width: int | None = None
     video_height: int | None = None
+    pixel_format: str | None = None
+    profile: str | None = None
+
+    @property
+    def browser_ready(self) -> bool:
+        """Whether every browser plays this video stream as it is (--browser-friendly copies it then)."""
+        return self.video_format == "h264" and self.pixel_format == "yuv420p" and self.profile in BROWSER_PROFILES
 
 
 class FfmpegError(RuntimeError):
@@ -117,9 +131,13 @@ def find_ffmpeg(explicit: str | None = None) -> FfmpegBinary:
     return FfmpegBinary(usable[0], frozenset(), _software_encoders(usable[0]))
 
 
-def choose_encoder(source_format: str | None, tool: FfmpegBinary, *, gpu: bool = True) -> Encoder:
-    """The source's own format if possible, else the most efficient one; the GPU beats the CPU."""
-    order = sorted(FORMATS, key=lambda f: f != source_format)  # stable sort: source format first
+def choose_encoder(source_format: str | None, tool: FfmpegBinary, *, gpu: bool = True,
+                   formats: tuple[str, ...] = FORMATS) -> Encoder:
+    """The source's own format if possible, else the most efficient one; the GPU beats the CPU.
+
+    `formats` limits the choice, most efficient first (--browser-friendly allows only H.264).
+    """
+    order = sorted(formats, key=lambda f: f != source_format)  # stable sort: source format first
     if gpu:
         for fmt in order:
             if fmt in tool.gpu_formats:
@@ -137,14 +155,15 @@ def target_bitrate(source: SourceInfo, fmt: str) -> int | None:
     return round(source.video_bitrate * BITRATE_FACTOR[fmt] / BITRATE_FACTOR[source.video_format])
 
 
-def scale_filter(source_height: int | None, target_height: int) -> str | None:
-    """Return a proportional upscale filter when the source is below the target height."""
-    return f"scale=-2:{target_height}" if source_height and source_height < target_height else None
+def scale_filter(source_height: int | None, target_height: int | None) -> str | None:
+    """Return a proportional upscale filter when the source is below the target height (None: never)."""
+    return f"scale=-2:{target_height}" if source_height and target_height and source_height < target_height else None
 
 
-def audio_encoder(source_format: str | None, tool: FfmpegBinary) -> tuple[str, str]:
+def audio_encoder(source_format: str | None, tool: FfmpegBinary, *, browser: bool = False) -> tuple[str, str]:
+    """The source's audio codec if this ffmpeg can encode it, else AAC; always AAC for browsers."""
     codec, bitrate = AUDIO_ENCODERS.get(source_format or "", AUDIO_ENCODERS["aac"])
-    return (codec, bitrate) if codec in tool.software else AUDIO_ENCODERS["aac"]
+    return (codec, bitrate) if codec in tool.software and not browser else AUDIO_ENCODERS["aac"]
 
 
 def probe_source(video: Path, original: Path | None, *, ffprobe: str = "ffprobe") -> SourceInfo:
@@ -160,7 +179,7 @@ def probe_source(video: Path, original: Path | None, *, ffprobe: str = "ffprobe"
         streams = ffmpeg.probe(str(original), cmd=ffprobe)["streams"]
         audio_format = next((s.get("codec_name") for s in streams if s.get("codec_type") == "audio"), None)
     return SourceInfo(stream.get("codec_name"), bitrate or None, audio_format,
-                      stream.get("width"), stream.get("height"))
+                      stream.get("width"), stream.get("height"), stream.get("pix_fmt"), stream.get("profile"))
 
 
 def _ffmpegs_on_path() -> list[str]:
@@ -204,11 +223,20 @@ def format_bitrate(bitrate: int | None) -> str:
 # --- the ffmpeg jobs -----------------------------------------------------------------------
 
 
+def loudness(path: Path, *, binary: str = "ffmpeg") -> float | None:
+    """A file's integrated loudness (EBU R128) in LUFS, or None if ffmpeg can't tell."""
+    out = subprocess.run([binary, "-hide_banner", "-nostats", "-i", str(path), "-af", "ebur128=framelog=quiet",
+                          "-f", "null", "-"], capture_output=True, text=True, errors="replace").stderr
+    found = re.findall(r"I:\s+(-?[\d.]+) LUFS", out)
+    return float(found[-1]) if found else None
+
+
 def extract_audio(source: Path, target: Path, *, binary: str = "ffmpeg", duration: float | None = None,
                   on_progress: ProgressCallback | None = None) -> None:
-    """Decode the audio to 44.1 kHz stereo WAV, the input format of the separation models."""
+    """Decode the audio to 44.1 kHz stereo WAV, the input format of the separation models, in float:
+    the stems are written as the input is, and a song mastered to full scale keeps its peaks."""
     partial = partial_path(target)
-    stream = ffmpeg.input(str(source)).output(str(partial), vn=None, acodec="pcm_s16le", ar=44100, ac=2)
+    stream = ffmpeg.input(str(source)).output(str(partial), vn=None, acodec="pcm_f32le", ar=44100, ac=2)
     run(stream, binary=binary, duration=duration, on_progress=on_progress)
     partial.replace(target)
 
@@ -222,29 +250,76 @@ def extract_video(source: Path, target: Path, *, binary: str = "ffmpeg", duratio
     partial.replace(target)
 
 
-def render(video: Path, audio: Path, subtitles: Path, target: Path, *, tool: FfmpegBinary, source: SourceInfo,
-           lead: Path | None = None, lead_volume: float = 0.0, darken: float = 0.08,
-           target_height: int = 1080, duration: float | None = None,
+def sample_frames(video: Path, *, binary: str = "ffmpeg", ffprobe: str = "ffprobe", count: int = 32,
+                  size: tuple[int, int] = (64, 36), duration: float | None = None) -> np.ndarray:
+    """`count` small RGB frames spread evenly over the video, as an array (frames, height, width, 3).
+
+    Each frame is a fast seek to the keyframe nearest its time, so only `count` frames get decoded
+    (some decoders, dav1d among them, ignore ffmpeg's keyframes-only switch).
+    """
+    if not duration:
+        duration = float(ffmpeg.probe(str(video), cmd=ffprobe)["format"]["duration"])
+    width, height = size
+
+    def grab(time: float) -> bytes:
+        stream = (ffmpeg.input(str(video), ss=round(time, 3), noaccurate_seek=None).video
+                  .filter("scale", width, height)
+                  .output("pipe:", vframes=1, format="rawvideo", pix_fmt="rgb24"))
+        args = [binary, "-hide_banner", "-loglevel", "error", *ffmpeg.compile(stream)[1:]]
+        result = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True, timeout=120,
+                                creationflags=_BELOW_NORMAL)
+        if result.returncode != 0:
+            details = result.stderr.decode("utf-8", "replace").strip()[-2000:]
+            raise FfmpegError(f"ffmpeg exited with code {result.returncode}: {details}")
+        return result.stdout
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        frames = pool.map(grab, [(index + 0.5) / count * duration for index in range(count)])
+        data = b"".join(frame for frame in frames if len(frame) == width * height * 3)
+    return np.frombuffer(data, dtype=np.uint8).reshape(-1, height, width, 3)
+
+
+def render(video: Path, audio: Path, subtitles: Path | None, target: Path, *, tool: FfmpegBinary,
+           source: SourceInfo, lead: Path | None = None, lead_volume: float = 0.0, darken: float = 0.08,
+           target_height: int | None = 1080, browser: bool = False, copy_audio: bool = False,
+           duration: float | None = None, gain_db: float | None = None,
            on_progress: ProgressCallback | None = None) -> str:
     """Darken the video, burn in the subtitles and pair it with the karaoke audio.
 
     Encodes to the source's video format at a comparable bitrate when the hardware allows, and
-    falls back to the CPU if the GPU encoder fails. Returns a description of the encoding.
+    falls back to the CPU if the GPU encoder fails. Without subtitles the picture is left as it
+    is: the video stream is copied, unless it must be upscaled. `browser` makes an MP4 every
+    browser plays: H.264 High (copied when the source already is such H.264), AAC, fast start.
+    `copy_audio` passes `audio` (the source's own track) through when the output takes its codec.
+    `gain_db` changes the audio's level, with a limiter keeping its peaks under -1 dBFS.
+    Returns a description of the encoding.
     """
-    attempts = [choose_encoder(source.video_format, tool)]
+    if copy_audio and (not browser or source.audio_format == "aac"):
+        audio_codec, audio_bitrate = "copy", None
+    else:
+        audio_codec, audio_bitrate = audio_encoder(source.audio_format, tool, browser=browser)
+    sound = f"{source.audio_format or 'audio'} copied" if audio_codec == "copy" else audio_codec
+    options: dict[str, Any] = dict(lead=lead, lead_volume=lead_volume, gain_db=gain_db, darken=darken,
+                                   target_height=target_height,
+                                   source_height=source.video_height, browser=browser, duration=duration,
+                                   on_progress=on_progress)
+    untouched = subtitles is None and not scale_filter(source.video_height, target_height)
+    if untouched and (source.browser_ready or not browser):
+        log.info("source %s copied as it is, audio %s", source.video_format or "video", sound)
+        _render(tool.path, None, None, (audio_codec, audio_bitrate), video, audio, None, target, **options)
+        return f"{source.video_format or 'video'} copied + {sound}"
+    formats = ("h264",) if browser else FORMATS
+    attempts = [choose_encoder(source.video_format, tool, formats=formats)]
     if attempts[0].gpu:
-        attempts.append(choose_encoder(source.video_format, tool, gpu=False))
-    audio_codec, audio_bitrate = audio_encoder(source.audio_format, tool)
+        attempts.append(choose_encoder(source.video_format, tool, gpu=False, formats=formats))
     for index, encoder in enumerate(attempts):
         bitrate = target_bitrate(source, encoder.format)
         log.info("source %s at %s → %s at %s, audio %s", source.video_format or "unknown",
-                 format_bitrate(source.video_bitrate), encoder.label, format_bitrate(bitrate), audio_codec)
+                 format_bitrate(source.video_bitrate), encoder.label, format_bitrate(bitrate), sound)
         try:
             _render(tool.path, encoder, bitrate, (audio_codec, audio_bitrate), video, audio, subtitles, target,
-                lead=lead, lead_volume=lead_volume, darken=darken,
-                target_height=target_height, source_height=source.video_height,
-                duration=duration, on_progress=on_progress)
-            return f"{encoder.label} at {format_bitrate(bitrate)} + {audio_codec}"
+                    **options)
+            return f"{encoder.label} at {format_bitrate(bitrate)} + {sound}"
         except FfmpegError as error:
             if index == len(attempts) - 1:
                 raise
@@ -252,10 +327,12 @@ def render(video: Path, audio: Path, subtitles: Path, target: Path, *, tool: Ffm
     raise AssertionError("unreachable")
 
 
-def _render(binary: str, encoder: Encoder, bitrate: int | None, audio_encoding: tuple[str, str], video: Path,
-            audio: Path, subtitles: Path, target: Path, *, darken: float, duration: float | None,
-            lead: Path | None, lead_volume: float, target_height: int, source_height: int | None,
-            on_progress: ProgressCallback | None) -> None:
+def _render(binary: str, encoder: Encoder | None, bitrate: int | None, audio_encoding: tuple[str, str | None],
+            video: Path, audio: Path, subtitles: Path | None, target: Path, *, darken: float,
+            duration: float | None, lead: Path | None, lead_volume: float, gain_db: float | None,
+            target_height: int | None,
+            source_height: int | None, browser: bool, on_progress: ProgressCallback | None) -> None:
+    """One ffmpeg run. `encoder` None copies the video stream (no filters then); `subtitles` None burns in nothing."""
     # The subtitles filter chokes on Windows drive letters ("C:"), so ffmpeg runs
     # inside the output folder and gets every path relative to it.
     folder = target.parent
@@ -266,21 +343,30 @@ def _render(binary: str, encoder: Encoder, bitrate: int | None, audio_encoding: 
 
     # With a GPU encoder, decode on the GPU as well (ffmpeg falls back to the CPU if it can't).
     # Frames come back to system memory for the eq and subtitles filters, which only exist on the CPU.
-    decode = {"hwaccel": "cuda"} if encoder.gpu else {}
+    decode = {"hwaccel": "cuda"} if encoder is not None and encoder.gpu else {}
     picture = ffmpeg.input(relative(video), **decode).video
-    if scale_filter(source_height, target_height):
-        picture = picture.filter("scale", -2, target_height)
-    picture = picture.filter("eq", brightness=-darken).filter("subtitles", relative(subtitles))
+    if encoder is None:
+        video_options: dict[str, Any] = {"vcodec": "copy"}
+    else:
+        if scale_filter(source_height, target_height):
+            picture = picture.filter("scale", -2, target_height)
+        if subtitles is not None:
+            picture = picture.filter("eq", brightness=-darken).filter("subtitles", relative(subtitles))
+        video_options = {"vcodec": encoder.codec, "pix_fmt": "yuv420p", **encoder.options(bitrate)}
+        if browser:
+            video_options["profile:v"] = "high"
+    if browser:
+        video_options["movflags"] = "+faststart"  # the index goes first, so playback starts while loading
     sound = ffmpeg.input(relative(audio)).audio
     if lead is not None and lead_volume:
         lead_stream = ffmpeg.input(relative(lead)).audio.filter("volume", lead_volume)
         sound = ffmpeg.filter([sound, lead_stream], "amix", inputs=2, duration="first", dropout_transition=0)
+    if gain_db:
+        # the limiter's own level makeup off: it only catches the peaks the gain pushes past -1 dBFS
+        sound = sound.filter("volume", f"{gain_db:.2f}dB").filter("alimiter", limit=0.891, level=0)
     audio_codec, audio_bitrate = audio_encoding
-    stream = ffmpeg.output(
-        picture, sound, relative(partial),
-        vcodec=encoder.codec, acodec=audio_codec, audio_bitrate=audio_bitrate, pix_fmt="yuv420p", shortest=None,
-        **encoder.options(bitrate),
-    )
+    audio_options = {"acodec": audio_codec, **({"audio_bitrate": audio_bitrate} if audio_bitrate else {})}
+    stream = ffmpeg.output(picture, sound, relative(partial), shortest=None, **audio_options, **video_options)
     run(stream, binary=binary, cwd=folder, duration=duration, on_progress=on_progress)
     partial.replace(target)
 
@@ -291,11 +377,9 @@ def run(stream: Any, *, binary: str = "ffmpeg", cwd: Path | None = None, duratio
     args = [binary, "-hide_banner", "-nostats", "-loglevel", "error", "-progress", "pipe:1", "-y",
             *ffmpeg.compile(stream)[1:]]
     log.debug("$ %s", subprocess.list2cmdline(args))
-    # Below-normal priority keeps the desktop responsive while ffmpeg crunches.
-    priority = subprocess.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 0
     process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
-                               creationflags=priority)
+                               creationflags=_BELOW_NORMAL)
     errors: list[str] = []
     reader = threading.Thread(target=lambda: errors.extend(process.stderr), daemon=True)  # type: ignore[arg-type]
     reader.start()
