@@ -220,13 +220,15 @@ class Details:
 def describe(artist: str, song: str, *, get: HttpGet = requests.get, timeout: float = 15) -> Details | None:
     """What MusicBrainz knows of `artist` - `song`, or None when it knows no recording of it.
 
-    Six requests at most (a second apart): the search -- again with the artist's words loose, when
-    the names as a phrase find nothing ("Paul McCartney & Wings") --, the recording, its work, its
-    album and its artist.
+    Six requests at most (a second apart): the search -- again with the artist's words loose and
+    the song's without what it adds in brackets, when the names as a phrase find nothing ("Paul
+    McCartney & Wings", "Total Eclipse of the Heart (Turn Around)") --, the recording, its work,
+    its album and its artist.
     """
     found = confirmed(search(build_query([(artist, song)]), get=get, timeout=timeout), artist, song)
-    if not found and _terms(artist) and _terms(song):
-        loose = f'recording:"{_terms(song)}" AND artist:({_terms(artist)})'
+    title = _terms(without_brackets(song)) or _terms(song)
+    if not found and _terms(artist) and title:
+        loose = f'recording:"{title}" AND artist:({_terms(artist)})'
         found = confirmed(search(loose, get=get, timeout=timeout), artist, song)
     if not found:
         return None

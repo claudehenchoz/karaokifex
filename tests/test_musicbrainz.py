@@ -206,5 +206,8 @@ def test_describe_asks_for_the_recording_its_work_album_and_artist():
         return Answer({"recordings": []})
 
     assert musicbrainz.describe("Paul McCartney & Wings", "Live and Let Die", get=nothing) is None
+    assert musicbrainz.describe("Bonnie Tyler", "Total Eclipse of the Heart (Turn Around)", get=nothing) is None
     assert queries == ['(recording:"live and let die" AND artist:"paul mccartney wings")',
-                       'recording:"live and let die" AND artist:(paul mccartney wings)']
+                       'recording:"live and let die" AND artist:(paul mccartney wings)',
+                       '(recording:"total eclipse of the heart turn around" AND artist:"bonnie tyler")',
+                       'recording:"total eclipse of the heart" AND artist:(bonnie tyler)']
