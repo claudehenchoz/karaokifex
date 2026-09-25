@@ -495,6 +495,12 @@ def _original(job: Job, ctx: TaskContext) -> str:
 def _render(job: Job, ctx: TaskContext) -> str:
     ws = job.workspace
     source = _source_info(job)
+    gain = None
+    if job.config.match_loudness:
+        song, karaoke = media.loudness(ws.audio, binary=job.ffmpeg.path), media.loudness(ws.karaoke_backing, binary=job.ffmpeg.path)
+        if song is not None and karaoke is not None:
+            gain = song - karaoke
+            log.info("loudness: the song %.1f LUFS, the karaoke %.1f: %+.1f dB to match", song, karaoke, gain)
     if not job.config.burn_lyrics:
         subtitles = None
     else:
@@ -502,7 +508,7 @@ def _render(job: Job, ctx: TaskContext) -> str:
     encoding = media.render(ws.video, ws.karaoke_backing, subtitles, job.output_video, tool=job.ffmpeg,
                             source=source, lead=ws.karaoke_lead, lead_volume=job.config.lead_volume,
                             darken=job.config.darken, target_height=job.config.target_height,
-                            browser=job.config.browser_friendly, duration=job.info.duration,
+                            browser=job.config.browser_friendly, duration=job.info.duration, gain_db=gain,
                             on_progress=ctx.progress)
     size = job.output_video.stat().st_size / 1_048_576
     log.info("rendered %s (%.0f MiB) with %s", job.output_video.name, size, encoding)

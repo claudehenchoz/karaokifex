@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import ffmpeg
 import pytest
 
@@ -195,3 +197,11 @@ def test_the_original_for_browsers_gets_aac(monkeypatch, tmp_path):
     source = SourceInfo("h264", 4_000_000, "aac", 1920, 1080, "yuv420p", "High")
     description, args = fake_render(monkeypatch, tmp_path, None, source, copy_audio=True, browser=True)
     assert description == "h264 copied + aac copied"
+
+
+def test_loudness_reads_ffmpegs_summary(monkeypatch):
+    summary = "  Integrated loudness:\n    I:         -11.4 LUFS\n    Threshold: -21.6 LUFS\n"
+    monkeypatch.setattr(media.subprocess, "run", lambda *a, **k: type("R", (), {"stderr": summary})())
+    assert media.loudness(Path("x.wav")) == -11.4
+    monkeypatch.setattr(media.subprocess, "run", lambda *a, **k: type("R", (), {"stderr": "no audio"})())
+    assert media.loudness(Path("x.wav")) is None

@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -222,6 +223,14 @@ def format_bitrate(bitrate: int | None) -> str:
 # --- the ffmpeg jobs -----------------------------------------------------------------------
 
 
+def loudness(path: Path, *, binary: str = "ffmpeg") -> float | None:
+    """A file's integrated loudness (EBU R128) in LUFS, or None if ffmpeg can't tell."""
+    out = subprocess.run([binary, "-hide_banner", "-nostats", "-i", str(path), "-af", "ebur128=framelog=quiet",
+                          "-f", "null", "-"], capture_output=True, text=True, errors="replace").stderr
+    found = re.findall(r"I:\s+(-?[\d.]+) LUFS", out)
+    return float(found[-1]) if found else None
+
+
 def extract_audio(source: Path, target: Path, *, binary: str = "ffmpeg", duration: float | None = None,
                   on_progress: ProgressCallback | None = None) -> None:
     """Decode the audio to 44.1 kHz stereo WAV, the input format of the separation models, in float:
@@ -273,7 +282,8 @@ def sample_frames(video: Path, *, binary: str = "ffmpeg", ffprobe: str = "ffprob
 def render(video: Path, audio: Path, subtitles: Path | None, target: Path, *, tool: FfmpegBinary,
            source: SourceInfo, lead: Path | None = None, lead_volume: float = 0.0, darken: float = 0.08,
            target_height: int | None = 1080, browser: bool = False, copy_audio: bool = False,
-           duration: float | None = None, on_progress: ProgressCallback | None = None) -> str:
+           duration: float | None = None, gain_db: float | None = None,
+           on_progress: ProgressCallback | None = None) -> str:
     """Darken the video, burn in the subtitles and pair it with the karaoke audio.
 
     Encodes to the source's video format at a comparable bitrate when the hardware allows, and
@@ -281,6 +291,7 @@ def render(video: Path, audio: Path, subtitles: Path | None, target: Path, *, to
     is: the video stream is copied, unless it must be upscaled. `browser` makes an MP4 every
     browser plays: H.264 High (copied when the source already is such H.264), AAC, fast start.
     `copy_audio` passes `audio` (the source's own track) through when the output takes its codec.
+    `gain_db` changes the audio's level, with a limiter keeping its peaks under -1 dBFS.
     Returns a description of the encoding.
     """
     if copy_audio and (not browser or source.audio_format == "aac"):
@@ -288,7 +299,8 @@ def render(video: Path, audio: Path, subtitles: Path | None, target: Path, *, to
     else:
         audio_codec, audio_bitrate = audio_encoder(source.audio_format, tool, browser=browser)
     sound = f"{source.audio_format or 'audio'} copied" if audio_codec == "copy" else audio_codec
-    options: dict[str, Any] = dict(lead=lead, lead_volume=lead_volume, darken=darken, target_height=target_height,
+    options: dict[str, Any] = dict(lead=lead, lead_volume=lead_volume, gain_db=gain_db, darken=darken,
+                                   target_height=target_height,
                                    source_height=source.video_height, browser=browser, duration=duration,
                                    on_progress=on_progress)
     untouched = subtitles is None and not scale_filter(source.video_height, target_height)
@@ -317,7 +329,8 @@ def render(video: Path, audio: Path, subtitles: Path | None, target: Path, *, to
 
 def _render(binary: str, encoder: Encoder | None, bitrate: int | None, audio_encoding: tuple[str, str | None],
             video: Path, audio: Path, subtitles: Path | None, target: Path, *, darken: float,
-            duration: float | None, lead: Path | None, lead_volume: float, target_height: int | None,
+            duration: float | None, lead: Path | None, lead_volume: float, gain_db: float | None,
+            target_height: int | None,
             source_height: int | None, browser: bool, on_progress: ProgressCallback | None) -> None:
     """One ffmpeg run. `encoder` None copies the video stream (no filters then); `subtitles` None burns in nothing."""
     # The subtitles filter chokes on Windows drive letters ("C:"), so ffmpeg runs
@@ -348,6 +361,9 @@ def _render(binary: str, encoder: Encoder | None, bitrate: int | None, audio_enc
     if lead is not None and lead_volume:
         lead_stream = ffmpeg.input(relative(lead)).audio.filter("volume", lead_volume)
         sound = ffmpeg.filter([sound, lead_stream], "amix", inputs=2, duration="first", dropout_transition=0)
+    if gain_db:
+        # the limiter's own level makeup off: it only catches the peaks the gain pushes past -1 dBFS
+        sound = sound.filter("volume", f"{gain_db:.2f}dB").filter("alimiter", limit=0.891, level=0)
     audio_codec, audio_bitrate = audio_encoding
     audio_options = {"acodec": audio_codec, **({"audio_bitrate": audio_bitrate} if audio_bitrate else {})}
     stream = ffmpeg.output(picture, sound, relative(partial), shortest=None, **audio_options, **video_options)

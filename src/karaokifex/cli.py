@@ -79,6 +79,10 @@ log = logging.getLogger("karaokifex")
 @click.option("--palette", is_flag=True,
               help="Find the video's dominant colours (5, each with its share of the picture) and write them "
                    "to metadata.json.")
+@click.option("--match-loudness", is_flag=True,
+              help="Bring the karaoke to the original's loudness (EBU R128), its peaks kept under -1 dBFS, so "
+                   "switching between the two doesn't change the level. Without, it is as loud as the song "
+                   "without its lead voice.")
 @click.option("--describe", is_flag=True,
               help="Look up what MusicBrainz knows of the song -- the album it first came out on, the year, its "
                    "genres, its writers, its language and where its artist is from -- and write it to song.json.")

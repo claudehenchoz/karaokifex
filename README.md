@@ -131,6 +131,10 @@ given several times: each model separates the song, and their leads are averaged
 top of MVSEP's lead/back-vocals leaderboard does too. For example
 `--karaoke-model bs_roformer_karaoke_frazer_becruily.ckpt --karaoke-model bs_roformer_karaoke_anvuew.ckpt
 --karaoke-model mel_band_roformer_karaoke_gabox.ckpt`.
+
+Without its lead voice the song is quieter; `--match-loudness` brings the karaoke to the original's
+loudness (EBU R128), a limiter keeping its peaks under -1 dBFS, so switching between the two doesn't change
+the level.
  
 Rendering decodes and encodes on the GPU (`-hwaccel cuda` + NVENC); only the darkening and subtitle
 filters run on the CPU. With burned-in lyrics the default output height is 1080p: sources below
