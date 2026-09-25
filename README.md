@@ -61,7 +61,7 @@ uv run karaokifex "https://www.youtube.com/watch?v=..."
 | `palette`          | only with `--palette`: the video's dominant colours (k-means over 32 sampled frames) | `metadata.json`        |
 | `describe`         | only with `--describe`: MusicBrainz's album, year, genres, writers, language, artist's country | `song.json` |
 | `quality`          | only with `--quality`: the download's and the renders' resolution, frame rate, codecs, bitrates | `quality.json` |
-| `separate_karaoke` | audio-separator, `mel_band_roformer_karaoke_gabox.ckpt`         | `stems/karaoke_backing.wav`, `stems/karaoke_lead.wav` |
+| `separate_karaoke` | audio-separator, `mel_band_roformer_karaoke_gabox.ckpt` (or several, averaged); the backing is the song minus the lead | `stems/karaoke_backing.wav`, `stems/karaoke_lead.wav` |
 | `lyrics`           | lrclib.net, up to 3 versions (the one that fits the audio wins) | `lyrics.json`                               |
 | `load_whisper`     | whisperx model load (runs early, while everything else works)   | –                                           |
 | `vocal_activity`   | energy envelope of the lead vocals: when someone is singing     | `stems/lead_activity.npz`                   |
@@ -122,6 +122,15 @@ There is a single stem separation pass. The karaoke model's lead-vocal stem doub
 which also keeps backing vocals out of the transcription. The Roformer model runs in half precision
 with an overlap of 2, about 4.6× faster than audio-separator's defaults (fp32, overlap 8) in a benchmark
 on an RTX 3070. `--overlap 8 --fp32` restores those defaults if you want the last bit of quality.
+
+The karaoke is the song minus its lead vocal, not the model's own "instrumental". audio-separator scales
+the mix before separating and each stem after, so that stem came out a few dB quieter than the song across
+the board, bass and air included: a thinner copy. The lead is fitted back to the song's own level (least
+squares), and the backing is what is left of the song, at its level and fullness. `--karaoke-model` can be
+given several times: each model separates the song, and their leads are averaged (an ensemble), which the
+top of MVSEP's lead/back-vocals leaderboard does too. For example
+`--karaoke-model bs_roformer_karaoke_frazer_becruily.ckpt --karaoke-model bs_roformer_karaoke_anvuew.ckpt
+--karaoke-model mel_band_roformer_karaoke_gabox.ckpt`.
  
 Rendering decodes and encodes on the GPU (`-hwaccel cuda` + NVENC); only the darkening and subtitle
 filters run on the CPU. With burned-in lyrics the default output height is 1080p: sources below

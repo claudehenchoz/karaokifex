@@ -159,7 +159,7 @@ def build_tasks(job: Job) -> list[Task]:
         Task("extract_video", partial(_extract_video, job), deps=("download",), outputs=(ws.video,),
              description="ffmpeg → video.mkv (no audio)"),
         Task("separate_karaoke", partial(_separate_karaoke, job), deps=("extract_audio",),
-             outputs=(ws.karaoke_backing, ws.karaoke_lead), gpu=True, description=cfg.karaoke_model),
+             outputs=(ws.karaoke_backing, ws.karaoke_lead), gpu=True, description=" + ".join(cfg.karaoke_models)),
         Task("vocal_activity", partial(_vocal_activity, job), deps=("separate_karaoke",),
              outputs=(ws.lead_activity,), description="when the lead vocals are audible"),
         Task("transcribe", partial(_transcribe, job), deps=("separate_karaoke", "load_whisper", "lyrics"),
@@ -313,10 +313,22 @@ def _quality(job: Job, ctx: TaskContext) -> str:
 
 
 def _separate_karaoke(job: Job, ctx: TaskContext) -> None:
+    """Each model's lead and backing (kept per model, so a re-run resumes after the last one done),
+    then the lead averaged at the song's own level and the backing the song minus it (separation.combine)."""
     ws, cfg = job.workspace, job.config
-    separation.separate(ws.audio, model=cfg.karaoke_model, model_dir=cfg.model_dir,
-                        stems={"instrumental": ws.karaoke_backing, "vocals": ws.karaoke_lead},
-                        overlap=cfg.separation_overlap, fp16=cfg.fp16, verbose=cfg.verbose, on_stage=ctx.note)
+    pairs = []
+    for number, model in enumerate(cfg.karaoke_models):
+        lead, backing = ws.stems_dir / f"lead.{number}.wav", ws.stems_dir / f"backing.{number}.wav"
+        if not (lead.exists() and backing.exists()):
+            prefix = f"{number + 1}/{len(cfg.karaoke_models)} " if len(cfg.karaoke_models) > 1 else ""
+            separation.separate(ws.audio, model=model, model_dir=cfg.model_dir,
+                                stems={"instrumental": backing, "vocals": lead}, overlap=cfg.separation_overlap,
+                                fp16=cfg.fp16, verbose=cfg.verbose, on_stage=lambda note: ctx.note(prefix + note))
+        pairs.append((lead, backing))
+    ctx.note("the song minus the lead…")
+    gains = separation.combine(ws.audio, pairs, backing=ws.karaoke_backing, lead=ws.karaoke_lead)
+    log.info("lead vocals at the song's level (gains %s), the karaoke the song minus their average",
+             ", ".join(f"{g:.2f}" for g in gains))
 
 
 def _vocal_activity(job: Job, ctx: TaskContext) -> None:

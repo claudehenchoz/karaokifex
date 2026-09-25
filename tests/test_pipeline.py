@@ -204,3 +204,25 @@ def test_upscaling_is_for_burned_in_lyrics(job):
     assert replace(config, burn_lyrics=False).target_height is None
     assert replace(config, burn_lyrics=False, upscale=True).target_height == config.resolution
     assert replace(config, upscale=False).target_height is None
+
+
+def test_separation_runs_each_model_and_resumes_after_the_last_one_done(job, monkeypatch):
+    import numpy as np
+    import soundfile as sf
+
+    sf.write(job.workspace.audio, np.zeros((4410, 2), dtype=np.float32), 44100, subtype="FLOAT")
+    ran = []
+
+    def fake_separate(audio, *, model, stems, **_):
+        ran.append(model)
+        for path in stems.values():
+            sf.write(path, np.zeros((4410, 2), dtype=np.float32), 44100, subtype="FLOAT")
+
+    monkeypatch.setattr(pipeline.separation, "separate", fake_separate)
+    ensemble = replace(job, config=replace(job.config, karaoke_models=("a.ckpt", "b.ckpt", "c.ckpt")))
+    (job.workspace.stems_dir / "lead.0.wav").write_bytes(b"")  # a lead without its backing: model a again
+    for name in ("lead.1.wav", "backing.1.wav"):
+        sf.write(job.workspace.stems_dir / name, np.zeros((4410, 2), dtype=np.float32), 44100, subtype="FLOAT")
+    pipeline._separate_karaoke(ensemble, type("Ctx", (), {"note": lambda self, text: None})())
+    assert ran == ["a.ckpt", "c.ckpt"]
+    assert job.workspace.karaoke_backing.exists() and job.workspace.karaoke_lead.exists()

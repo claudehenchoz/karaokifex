@@ -224,9 +224,10 @@ def format_bitrate(bitrate: int | None) -> str:
 
 def extract_audio(source: Path, target: Path, *, binary: str = "ffmpeg", duration: float | None = None,
                   on_progress: ProgressCallback | None = None) -> None:
-    """Decode the audio to 44.1 kHz stereo WAV, the input format of the separation models."""
+    """Decode the audio to 44.1 kHz stereo WAV, the input format of the separation models, in float:
+    the stems are written as the input is, and a song mastered to full scale keeps its peaks."""
     partial = partial_path(target)
-    stream = ffmpeg.input(str(source)).output(str(partial), vn=None, acodec="pcm_s16le", ar=44100, ac=2)
+    stream = ffmpeg.input(str(source)).output(str(partial), vn=None, acodec="pcm_f32le", ar=44100, ac=2)
     run(stream, binary=binary, duration=duration, on_progress=on_progress)
     partial.replace(target)
 

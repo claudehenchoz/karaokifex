@@ -19,7 +19,7 @@ class Config:
     song: str | None = None
     language: str | None = None
     musicbrainz: bool = True  # canonical artist and song names from MusicBrainz
-    karaoke_model: str = DEFAULT_KARAOKE_MODEL
+    karaoke_models: tuple[str, ...] = (DEFAULT_KARAOKE_MODEL,)  # several: their lead vocals are averaged
     whisper_model: str = DEFAULT_WHISPER_MODEL
     separation_overlap: int = DEFAULT_SEPARATION_OVERLAP
     fp16: bool = True

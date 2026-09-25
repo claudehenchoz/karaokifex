@@ -80,8 +80,14 @@ harmless messages are dropped by `_DropKnownNoise`. `cli.py` sets `TQDM_DISABLE`
 ## Decisions and environment facts (don't undo without reason)
 
 - **One separation pass.** The karaoke model (`mel_band_roformer_karaoke_gabox.ckpt`) outputs the
-  backing track (for render) *and* the lead vocals, which are what whisperx transcribes. A separate
-  vocal-isolation pass was removed at the user's request because it was very slow.
+  lead vocals, which are what whisperx transcribes, and the backing track is the song minus them. A
+  separate vocal-isolation pass was removed at the user's request because it was very slow. Several
+  `--karaoke-model`s each run once and their leads are averaged (`separation.combine`).
+- **The backing is the song minus the lead, never the model's instrumental.** audio-separator normalises
+  the mix to a 0.9 peak before separating and every stem after (it allows no threshold above 1.0), so its
+  stems only add up to the song at per-song gains: its instrumental was 3–4 dB below the song in every band.
+  `separation.fit_gains` fits the lead back to the song (least squares). The audio is decoded to float
+  (`pcm_f32le`), so the stems are float too and nothing clips.
 - **Separation speed.** Separation runs with `use_native_fp16` and overlap 2 (model configs default to 8).
   That is about 4.6× faster; `--overlap 8 --fp32` restores the defaults. `use_autocast` has no effect on
   Roformers.

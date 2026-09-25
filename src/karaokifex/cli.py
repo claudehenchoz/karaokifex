@@ -39,8 +39,9 @@ log = logging.getLogger("karaokifex")
                    "names given with --artist/--song win.")
 @click.option("-l", "--language",
               help="Language code, e.g. 'en'. Default: detected from the lyrics, else from the singing.")
-@click.option("--karaoke-model", default=DEFAULT_KARAOKE_MODEL, show_default=True,
-              help="audio-separator model splitting lead vocals from the rest (backing vocals included).")
+@click.option("--karaoke-model", "karaoke_models", multiple=True, default=(DEFAULT_KARAOKE_MODEL,), show_default=True,
+              help="audio-separator model splitting lead vocals from the rest (backing vocals included). Give it "
+                   "several times to average their lead vocals (an ensemble); each one takes its own run.")
 @click.option("--whisper-model", default=DEFAULT_WHISPER_MODEL, show_default=True, help="whisperx model.")
 @click.option("--overlap", "separation_overlap", type=click.IntRange(min=1), default=DEFAULT_SEPARATION_OVERLAP,
               show_default=True, help="Stem separation overlap: higher is marginally cleaner, proportionally slower.")
