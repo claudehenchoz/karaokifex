@@ -22,11 +22,13 @@ log = logging.getLogger("karaokifex")
 
 QUIET_FLOOR = -12.0   # LUFS: a song quieter than this is lifted to it, a couple of dB under most songs
 MOST = 12.0           # dB: the most a song is lifted
+LEAST = 1.0           # dB: less than this is not worth re-encoding a song's sound for
 
 
 def lift(level: float | None, floor: float = QUIET_FLOOR) -> float:
-    """The dB a song at `level` LUFS is lifted by: up to `floor`, at most MOST; none when it is loud enough."""
-    return min(MOST, floor - level) if level is not None and level < floor else 0.0
+    """The dB a song at `level` LUFS is lifted by: up to `floor`, at most MOST; none when it is loud enough,
+    or within LEAST of it."""
+    return min(MOST, floor - level) if level is not None and floor - level >= LEAST else 0.0
 
 
 def gains(song: float | None, karaoke: float | None, *, match: bool, lift_quiet: bool,

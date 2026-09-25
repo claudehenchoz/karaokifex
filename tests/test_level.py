@@ -4,6 +4,7 @@ from karaokifex.level import MOST, QUIET_FLOOR, gains, lift
 def test_a_loud_enough_song_is_left_as_it_is():
     assert lift(-9.5) == 0.0
     assert lift(-13.0, -16.0) == 0.0
+    assert lift(-12.6) == 0.0            # within a dB of it: not worth re-encoding for
     assert lift(QUIET_FLOOR) == 0.0
     assert lift(None) == 0.0
 
