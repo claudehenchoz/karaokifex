@@ -59,6 +59,8 @@ uv run karaokifex "https://www.youtube.com/watch?v=..."
 | `extract_video`    | ffmpeg (stream copy)                                            | `video.mkv`                                 |
 | `original`         | only with `--keep-source`: the video with its own sound, made like the karaoke video | `<Artist - Song> (Original).mkv` |
 | `palette`          | only with `--palette`: the video's dominant colours (k-means over 32 sampled frames) | `metadata.json`        |
+| `describe`         | only with `--describe`: MusicBrainz's album, year, genres, writers, language, artist's country | `song.json` |
+| `quality`          | only with `--quality`: the download's and the renders' resolution, frame rate, codecs, bitrates | `quality.json` |
 | `separate_karaoke` | audio-separator, `mel_band_roformer_karaoke_gabox.ckpt`         | `stems/karaoke_backing.wav`, `stems/karaoke_lead.wav` |
 | `lyrics`           | lrclib.net, up to 3 versions (the one that fits the audio wins) | `lyrics.json`                               |
 | `load_whisper`     | whisperx model load (runs early, while everything else works)   | –                                           |
@@ -150,6 +152,21 @@ first, each with its share of the picture (black letterbox and pillarbox bars do
 The colours come from k-means over 32 small frames spread across the video, one fast seek each, so the
 step takes seconds and runs while the stems are separated.
 
+`--describe` asks MusicBrainz what it knows of the song and writes it to `song.json`: the album it
+first came out on (the earliest official album of the artist's own, no compilation or live record),
+the year it first came out, its genres (the recording's, its album's and its artist's votes), its
+writers with their roles, the language it is sung in (ISO 639-1; the lyrics' guess when MusicBrainz has
+none) and where the artist is from. It runs once the lyrics are in, at most six requests a second
+apart. `karaokifex-describe <song folder>...` fills `song.json` in for songs made before.
+
+`--quality` writes `quality.json`: the download's resolution, frame rate, codecs and bitrates, read
+before the download is deleted, the same for each render, and whether a render was upscaled (the
+download's own size is otherwise lost under an upscale). `karaokifex-quality <song folder>...` fills it
+in for songs made before, from what is left: `info.json`'s resolution, and the original's streams where
+the original is the download's picture copied.
+
+lrclib is asked again when it answers busy (502, 503, 504) or not at all, waiting 2, 4, 8 and 16 s.
+
 Without `--browser-friendly`, the output is an MKV, like the download. The video keeps the source's
 format when the GPU can encode it; otherwise it uses the most efficient format the GPU can encode. For
 example, an RTX 30xx can't encode AV1, so AV1 sources become HEVC. The bitrate follows the source's,
@@ -177,6 +194,8 @@ src/karaokifex/
   evaluate.py     karaokifex-eval: timing accuracy against a reference
   metadata.py     artist/song guesses from video metadata (pure)
   palette.py      dominant colours of the video (pure)
+  describe.py     karaokifex-describe: song.json for songs made before --describe
+  quality.py      --quality and karaokifex-quality: the streams of the download and the renders
   steps/          one module per external tool: download, media, separation, lyrics, transcription,
                   musicbrainz
 ```

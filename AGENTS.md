@@ -64,6 +64,12 @@ fake `whisperx` module). The pure logic, where the tests concentrate, lives in:
 - `palette.py`: `--palette`, deterministic k-means (fixed-seed k-means++) over frames that
   `media.sample_frames` grabs with one fast seek each (dav1d ignores `-skip_frame nokey`, so decoding
   only keyframes doesn't work); black bars are cropped first. Written to `metadata.json`.
+- `steps/musicbrainz.py` also has `describe`: the confirmed recordings are the song; the earliest official
+  album of the artist's own gives the album, its recording the genres (weighed with the album's and the
+  artist's) and the work, whose relations give the writers and whose language the song's. Written to
+  `song.json` by the `describe` step (`--describe`) and by `karaokifex-describe` (`describe.py`).
+- `quality.py`: `summary` reads a file's streams with ffprobe; the `quality` step (`--quality`) reads the
+  download before cleanup deletes it, and `karaokifex-quality` makes do with `info.json` and the original.
 
 **Logging.** `runner.current_task` (a ContextVar set inside each worker) tags every log line with its
 task (`console.TaskLogHandler`). Some libraries install their own console handlers: `setup_logging`
