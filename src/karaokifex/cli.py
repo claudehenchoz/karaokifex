@@ -75,6 +75,9 @@ log = logging.getLogger("karaokifex")
 @click.option("--palette", is_flag=True,
               help="Find the video's dominant colours (5, each with its share of the picture) and write them "
                    "to metadata.json.")
+@click.option("--describe", is_flag=True,
+              help="Look up what MusicBrainz knows of the song -- the album it first came out on, the year, its "
+                   "genres, its writers, its language and where its artist is from -- and write it to song.json.")
 @click.option("--debug-ass", is_flag=True,
               help="Render '(Karaoke debug).mkv' with each word coloured by what timed it "
                    "(green forced, cyan whisper, violet LRC tag, orange LRC line, red interpolated).")

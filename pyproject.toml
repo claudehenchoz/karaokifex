@@ -28,6 +28,7 @@ dependencies = [
 [project.scripts]
 karaokifex = "karaokifex.cli:main"
 karaokifex-eval = "karaokifex.evaluate:main"
+karaokifex-describe = "karaokifex.describe:main"
 
 [dependency-groups]
 dev = ["pytest>=8.3"]

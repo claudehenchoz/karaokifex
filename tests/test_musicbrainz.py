@@ -110,3 +110,101 @@ def test_search_gives_up_eventually():
 
     with pytest.raises(requests.ConnectionError):
         musicbrainz.search("q", get=offline)
+
+
+# --- describe -------------------------------------------------------------------------
+
+BAND = {"id": "band", "name": "Band"}
+VARIOUS = {"id": musicbrainz.VARIOUS_ARTISTS, "name": "Various Artists"}
+
+
+def release(title, date, primary="Album", secondary=None, by=BAND, status="Official"):
+    return {"status": status, "date": date, "artist-credit": [{"name": by["name"], "artist": by}],
+            "release-group": {"id": f"rg-{title}", "title": title, "primary-type": primary,
+                              "secondary-types": secondary}}
+
+
+def song(rid, first, *releases, title="Song"):
+    return {"id": rid, "title": title, "first-release-date": first, "releases": list(releases),
+            "artist-credit": [{"name": "Band", "joinphrase": "", "artist": BAND}]}
+
+
+def test_the_album_is_the_earliest_of_the_artists_own():
+    found = [song("hits", "1999", release("Party Hits", "1999", secondary=["Compilation"], by=VARIOUS)),
+             song("live", "2001", release("Live in Oslo", "2001", secondary=["Live"])),
+             song("single", "1984-10-19", release("Song", "1984-10-19", primary="Single")),
+             song("studio", "1985", release("Second Album", "1987-01-01"), release("First Album", "1985-06-01")),
+             song("mixed", "1986", release("Throwback 80s", "1986", by=VARIOUS)),
+             song("boot", "1980", release("Taped", "1980", status="Bootleg"))]
+    recording, group = musicbrainz.first_album(found)
+    assert (recording["id"], group["title"]) == ("studio", "First Album")
+    assert musicbrainz.first_year(found) == 1980
+    assert musicbrainz.first_album([found[2]]) is None
+
+
+def test_genres_the_recording_votes_for_first():
+    genres = musicbrainz.top_genres([{"name": "pop", "count": 19}, {"name": "synth-pop", "count": 7},
+                                     {"name": "trance", "count": 1}],
+                                    [{"name": "new wave", "count": 5}, {"name": "pop", "count": 12}],
+                                    [{"name": "new wave", "count": 15}])
+    assert genres == ("pop", "new wave", "synth-pop")
+    assert musicbrainz.top_genres(None, [], None) == ()
+
+
+def test_writers_once_each_with_every_role_and_the_language():
+    work = {"language": "deu", "languages": ["deu"], "relations": [
+        {"type": "composer", "artist": {"name": "Anna"}}, {"type": "lyricist", "artist": {"name": "Ben"}},
+        {"type": "lyricist", "artist": {"name": "Anna"}}, {"type": "arranger", "artist": {"name": "Carl"}}]}
+    assert musicbrainz.writers_of(work) == (musicbrainz.Writer("Anna", ("composer", "lyricist")),
+                                            musicbrainz.Writer("Ben", ("lyricist",)))
+    assert musicbrainz.language_of(work) == "de"
+    assert musicbrainz.language_of({"languages": ["zxx"]}) is None
+    assert musicbrainz.language_of({"languages": ["eng", "fra"]}) == "mul"
+    assert musicbrainz.language_of({"language": "tlh"}) == "tlh"
+
+
+class Answer:
+    def __init__(self, data):
+        self.status_code, self.data = 200, data
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self.data
+
+
+def test_describe_asks_for_the_recording_its_work_album_and_artist():
+    other = {"id": "o", "title": "Song", "artist-credit": [{"name": "Other", "artist": {"id": "x", "name": "Other"}}]}
+    answers = {
+        "recording": {"recordings": [other, song("studio", "1985", release("First Album", "1985-06-01"))]},
+        "recording/studio": {"genres": [{"name": "pop", "count": 4}],
+                             "relations": [{"type": "performance", "work": {"id": "w"}}],
+                             "artist-credit": [{"name": "Band", "artist": BAND}]},
+        "work/w": {"id": "w", "languages": ["ita"], "relations": [{"type": "writer", "artist": {"name": "Anna"}}]},
+        "release-group/rg-First Album": {"genres": [{"name": "italo disco", "count": 3}]},
+        "artist/band": {"country": "IT", "genres": []},
+    }
+    asked = []
+
+    def get(url, params, **_):
+        asked.append((url.removeprefix(musicbrainz.API + "/"), params.get("inc")))
+        return Answer(answers[asked[-1][0]])
+
+    details = musicbrainz.describe("Band", "Song", get=get)
+    assert details.to_dict() == {"album": "First Album", "year": 1985, "genres": ["pop", "italo disco"],
+                                 "writers": [{"name": "Anna", "roles": ["writer"]}], "language": "it",
+                                 "country": "IT", "musicbrainz": {"recording": "studio",
+                                                                  "release-group": "rg-First Album",
+                                                                  "work": "w", "artist": "band"}}
+    assert [a for a, _ in asked] == ["recording", "recording/studio", "work/w", "release-group/rg-First Album",
+                                     "artist/band"]
+    queries = []
+
+    def nothing(url, params, **_):
+        queries.append(params["query"])
+        return Answer({"recordings": []})
+
+    assert musicbrainz.describe("Paul McCartney & Wings", "Live and Let Die", get=nothing) is None
+    assert queries == ['(recording:"live and let die" AND artist:"paul mccartney wings")',
+                       'recording:"live and let die" AND artist:(paul mccartney wings)']

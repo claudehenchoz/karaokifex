@@ -35,6 +35,7 @@ class Config:
     model_dir: Path = DEFAULT_MODEL_DIR
     mix_vote: bool = False  # also transcribe the full mix and let both transcriptions vote
     palette: bool = False  # find the video's dominant colours and write them to metadata.json
+    describe: bool = False  # the song's album, year, genres, writers and language, from MusicBrainz, in song.json
     debug_ass: bool = False  # render with words coloured by timing source
     keep_temp: bool = False  # keep every temporary file (they are deleted after a successful run)
     keep_source: bool = False  # also render the original video with its own sound, like the karaoke video

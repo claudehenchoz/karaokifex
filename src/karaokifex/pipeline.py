@@ -11,7 +11,8 @@ render) and the lead vocals (for transcription, vocal activity and forced
 alignment). With --mix-vote, `transcribe_mix` also transcribes the full mix.
 With --no-burn-lyrics, `render` doesn't wait for `subtitles`, which still writes
 the lyrics files. With --palette, `palette` samples frames of the extracted video
-for its dominant colours. With --keep-source, `original` puts the download's own
+for its dominant colours. With --describe, `describe` asks MusicBrainz about the
+song (album, year, genres, writers, language) once the lyrics are in. With --keep-source, `original` puts the download's own
 sound back under the video, in the output format.
 `probe` runs first on its own (its metadata names the song folder); the task
 runner handles the rest.
@@ -173,6 +174,9 @@ def build_tasks(job: Job) -> list[Task]:
     if cfg.palette:
         tasks.append(Task("palette", partial(_palette, job), deps=("extract_video",), outputs=(ws.metadata_json,),
                           description="dominant colours of the video"))
+    if cfg.describe:
+        tasks.append(Task("describe", partial(_describe, job), deps=("lyrics",), outputs=(ws.song_json,),
+                          description="MusicBrainz: album, year, genres, writers, language"))
     subtitle_deps = ("lyrics", "transcribe", "vocal_activity", "force_align")
     # Without burned-in lyrics the render doesn't wait for them; the subtitles step still writes the lyrics files.
     render_deps = ("extract_video", "separate_karaoke") + (("subtitles",) if cfg.burn_lyrics else ())
@@ -251,6 +255,39 @@ def _palette(job: Job, ctx: TaskContext) -> None:
     _write_json(ws.metadata_json, {"palette": {"colors": [swatch.to_dict() for swatch in swatches],
                                                "frames": len(frames)}})
     log.info("dominant colours: %s", ", ".join(f"{swatch.hex} {swatch.weight:.0%}" for swatch in swatches))
+
+
+def _describe(job: Job, ctx: TaskContext) -> str:
+    ctx.note("asking MusicBrainz…")
+    candidates = lyrics.load_lyrics(job.workspace.lyrics_json)
+    details = describe_song(job.workspace.song_json, job.artist, job.song,
+                            job.config.language or (lyrics.guess_language(candidates[0].lines) if candidates else None))
+    return ", ".join(str(x) for x in (details.get("album"), details.get("year"), *details.get("genres", [])[:2]) if x) \
+        or "MusicBrainz knows nothing more"
+
+
+def describe_song(target: Path, artist: str, song: str, language: str | None = None, *,
+                  get: musicbrainz.HttpGet = requests.get) -> dict[str, Any]:
+    """Write song.json: the song's names and what MusicBrainz knows of it. The language is the one
+    the song's work is in, else `language` (the lyrics' or the singing's). MusicBrainz not answering
+    leaves the rest out, and says so."""
+    about: dict[str, Any] = {"artist": artist, "song": song}
+    try:
+        details = musicbrainz.describe(artist, song, get=get)
+    except (requests.RequestException, ValueError) as error:
+        log.warning("MusicBrainz didn't answer (%s): no album, year, genres or writers this time", error)
+        about["musicbrainz"] = None
+    else:
+        if details is None:
+            log.info("MusicBrainz knows no recording of “%s – %s”", artist, song)
+        else:
+            about.update(details.to_dict())
+            log.info("MusicBrainz: first out %s, on %s · %s · by %s · sung in %s", details.year or "?", details.album or "no album",
+                     ", ".join(details.genres) or "no genres", ", ".join(w.name for w in details.writers) or "?",
+                     details.language or "?")
+    about["language"] = about.get("language") or language
+    _write_json(target, about)
+    return about
 
 
 def _separate_karaoke(job: Job, ctx: TaskContext) -> None:

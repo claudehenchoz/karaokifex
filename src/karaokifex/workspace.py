@@ -118,6 +118,11 @@ class Workspace:
         return self.root / "metadata.json"
 
     @property
+    def song_json(self) -> Path:
+        """What is known of the song itself (--describe): album, year, genres, writers, language."""
+        return self.root / "song.json"
+
+    @property
     def final_video(self) -> Path:
         return self.root / f"{sanitize_name(self.title)} (Karaoke).mkv"
 
@@ -146,7 +151,7 @@ class Workspace:
         videos = (self.final_video, self.debug_video, self.plain_video, self.original_video)
         earlier_renders = [path for video in videos for path in self.root.glob(f"{glob.escape(video.stem)}.*")]
         keep = {self.final_video, self.subtitles, self.karaoke_backing, self.lyrics_json, self.timings_json,
-                self.info_json, self.metadata_json}
+                self.info_json, self.metadata_json, self.song_json}
         return frozenset(keep | {p for p in earlier_renders if ".partial." not in p.name})
 
     def temp_files(self) -> list[Path]:

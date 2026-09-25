@@ -170,3 +170,21 @@ def test_subtitles_step_fails_without_anything_to_show(job):
     save_transcript([], "en", job.workspace.transcript_json)
     with pytest.raises(RuntimeError, match="nothing to display"):
         pipeline._subtitles(job, ctx=None)
+
+
+def test_describe_runs_after_the_lyrics_only_when_asked(job):
+    assert "describe" not in tasks_of(job)
+    described = replace(job, config=replace(job.config, describe=True))
+    task = tasks_of(described)["describe"]
+    assert task.deps == ("lyrics",) and task.outputs == (job.workspace.song_json,)
+
+
+def test_describe_song_keeps_the_names_and_a_language_when_musicbrainz_is_away(job, monkeypatch):
+    monkeypatch.setattr(pipeline.musicbrainz, "MIN_INTERVAL", 0.0)
+
+    def away(*_, **__):
+        raise requests.ConnectionError("down")
+
+    about = pipeline.describe_song(job.workspace.song_json, "Artist", "Song", "de", get=away)
+    assert about == {"artist": "Artist", "song": "Song", "musicbrainz": None, "language": "de"}
+    assert json.loads(job.workspace.song_json.read_text(encoding="utf-8")) == about
