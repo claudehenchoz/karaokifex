@@ -140,6 +140,13 @@ top of MVSEP's lead/back-vocals leaderboard does too. For example
 Without its lead voice the song is quieter; `--match-loudness` brings the karaoke to the original's
 loudness (EBU R128), a limiter keeping its peaks under -1 dBFS, so switching between the two doesn't change
 the level.
+
+Some songs, old masters mostly, are mastered far quieter than the rest (-20 LUFS and below, where most sit
+near -10) and play noticeably softer. `--lift-quiet`, on by default, lifts a song quieter than `--quiet-floor`
+(-16 LUFS) up to it, by at most 12 dB, the original and the karaoke alike, the same limiter keeping the peaks
+under -1 dBFS; louder songs are left as they are (`--no-lift-quiet` turns it off). A quiet song's original is
+then re-encoded rather than having its sound copied. `karaokifex-lift <song folder>... [--dry]` does the same
+for songs made before it: both renders' sound lifted by the same amount, the picture copied.
  
 Rendering decodes and encodes on the GPU (`-hwaccel cuda` + NVENC); only the darkening and subtitle
 filters run on the CPU. With burned-in lyrics the default output height is 1080p: sources below
@@ -214,6 +221,7 @@ src/karaokifex/
   palette.py      dominant colours of the video (pure)
   describe.py     karaokifex-describe: song.json for songs made before --describe
   quality.py      --quality and karaokifex-quality: the streams of the download and the renders
+  level.py        --lift-quiet and karaokifex-lift: how much a quiet song is lifted, and the lift itself
   steps/          one module per external tool: download, media, separation, lyrics, transcription,
                   musicbrainz
 ```

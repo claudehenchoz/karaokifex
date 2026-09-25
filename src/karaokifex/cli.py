@@ -87,6 +87,11 @@ log = logging.getLogger("karaokifex")
               help="Bring the karaoke to the original's loudness (EBU R128), its peaks kept under -1 dBFS, so "
                    "switching between the two doesn't change the level. Without, it is as loud as the song "
                    "without its lead voice.")
+@click.option("--lift-quiet/--no-lift-quiet", default=True, show_default=True,
+              help="Lift a song mastered quieter than --quiet-floor up to it, by at most 12 dB, the original and "
+                   "the karaoke alike, its peaks kept under -1 dBFS. Louder songs are left as they are.")
+@click.option("--quiet-floor", type=float, default=-16.0, show_default=True,
+              help="The loudness (EBU R128 LUFS) a song quieter than is lifted to it, with --lift-quiet.")
 @click.option("--describe", is_flag=True,
               help="Look up what MusicBrainz knows of the song -- the album it first came out on, the year, its "
                    "genres, its writers, its language and where its artist is from -- and write it to song.json.")

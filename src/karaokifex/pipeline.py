@@ -41,7 +41,7 @@ from karaokifex.console import TaskBoard, console, register_tasks
 from karaokifex.gpu import free_gpu_memory
 from karaokifex.metadata import guess_artist_song, name_guesses, title_segments
 from karaokifex.models import Lyrics, TimedWord, VideoInfo
-from karaokifex import quality
+from karaokifex import level, quality
 from karaokifex.palette import dominant_colors, without_bars
 from karaokifex.runner import RunReport, Task, TaskContext, TaskRunner, current_task
 from karaokifex.steps import download, lyrics, media, musicbrainz, separation, transcription
@@ -171,7 +171,8 @@ def build_tasks(job: Job) -> list[Task]:
                           deps=("extract_audio", "load_whisper", "lyrics", "transcribe"),
                           outputs=(ws.transcript_mix_json,), gpu=True, model=True, description="whisperx on the full mix"))
     if cfg.keep_source:
-        tasks.append(Task("original", partial(_original, job), deps=("download", "extract_video"),
+        tasks.append(Task("original", partial(_original, job),
+                          deps=("download", "extract_video") + (("extract_audio",) if cfg.lift_quiet else ()),
                           outputs=(job.original_video,), gpu=job.ffmpeg.gpu,
                           description="the original video with its own sound"))
     if cfg.palette:
@@ -481,12 +482,30 @@ def _source_info(job: Job) -> media.SourceInfo:
         return media.SourceInfo()
 
 
+_LEVELS: dict[tuple[str, float], float | None] = {}
+
+
+def _song_level(job: Job) -> float | None:
+    """The song's loudness (EBU R128 LUFS), measured once for the original and the karaoke both."""
+    audio = job.workspace.audio
+    key = (str(audio), audio.stat().st_mtime if audio.exists() else 0.0)
+    if key not in _LEVELS:
+        _LEVELS[key] = media.loudness(audio, binary=job.ffmpeg.path)
+    return _LEVELS[key]
+
+
 def _original(job: Job, ctx: TaskContext) -> str:
-    """The download in the output format: the same picture treatment as the karaoke video, the source's own sound."""
+    """The download in the output format: the same picture treatment as the karaoke video, the source's own sound
+    (copied, unless the song is too quiet and lifted: --lift-quiet)."""
     ws = job.workspace
+    gain = level.lift(_song_level(job), job.config.quiet_floor) if job.config.lift_quiet else 0.0
+    if gain:
+        log.info("loudness: the song %.1f LUFS, quieter than %.0f: lifted %+.1f dB, the original and the karaoke alike",
+                 _song_level(job), job.config.quiet_floor, gain)
     encoding = media.render(ws.video, ws.source, None, job.original_video, tool=job.ffmpeg, source=_source_info(job),
                             target_height=job.config.target_height, browser=job.config.browser_friendly,
-                            copy_audio=True, duration=job.info.duration, on_progress=ctx.progress)
+                            copy_audio=not gain, gain_db=gain or None, duration=job.info.duration,
+                            on_progress=ctx.progress)
     size = job.original_video.stat().st_size / 1_048_576
     log.info("wrote %s (%.0f MiB) with %s", job.original_video.name, size, encoding)
     return encoding
@@ -496,11 +515,14 @@ def _render(job: Job, ctx: TaskContext) -> str:
     ws = job.workspace
     source = _source_info(job)
     gain = None
-    if job.config.match_loudness:
-        song, karaoke = media.loudness(ws.audio, binary=job.ffmpeg.path), media.loudness(ws.karaoke_backing, binary=job.ffmpeg.path)
-        if song is not None and karaoke is not None:
-            gain = song - karaoke
-            log.info("loudness: the song %.1f LUFS, the karaoke %.1f: %+.1f dB to match", song, karaoke, gain)
+    if job.config.match_loudness or job.config.lift_quiet:
+        song, karaoke = _song_level(job), media.loudness(ws.karaoke_backing, binary=job.ffmpeg.path)
+        _, gain = level.gains(song, karaoke, match=job.config.match_loudness, lift_quiet=job.config.lift_quiet,
+                              floor=job.config.quiet_floor)
+        if job.config.match_loudness and song is not None and karaoke is not None:
+            log.info("loudness: the song %.1f LUFS, the karaoke %.1f: %+.1f dB%s", song, karaoke, gain,
+                     " to match and lift" if level.lift(song, job.config.quiet_floor) and job.config.lift_quiet else " to match")
+        gain = gain or None
     if not job.config.burn_lyrics:
         subtitles = None
     else:

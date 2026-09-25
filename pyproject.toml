@@ -30,6 +30,7 @@ karaokifex = "karaokifex.cli:main"
 karaokifex-eval = "karaokifex.evaluate:main"
 karaokifex-describe = "karaokifex.describe:main"
 karaokifex-quality = "karaokifex.quality:main"
+karaokifex-lift = "karaokifex.level:main"
 
 [dependency-groups]
 dev = ["pytest>=8.3"]
