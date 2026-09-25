@@ -188,3 +188,11 @@ def test_describe_song_keeps_the_names_and_a_language_when_musicbrainz_is_away(j
     about = pipeline.describe_song(job.workspace.song_json, "Artist", "Song", "de", get=away)
     assert about == {"artist": "Artist", "song": "Song", "musicbrainz": None, "language": "de"}
     assert json.loads(job.workspace.song_json.read_text(encoding="utf-8")) == about
+
+
+def test_quality_reads_the_download_before_it_goes(job):
+    assert "quality" not in tasks_of(job)
+    measured = replace(job, config=replace(job.config, quality=True, keep_source=True))
+    task = tasks_of(measured)["quality"]
+    assert task.deps == ("download", "render", "original") and task.outputs == (job.workspace.quality_json,)
+    assert job.workspace.quality_json in job.workspace.artifacts()

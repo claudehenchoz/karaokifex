@@ -12,7 +12,9 @@ alignment). With --mix-vote, `transcribe_mix` also transcribes the full mix.
 With --no-burn-lyrics, `render` doesn't wait for `subtitles`, which still writes
 the lyrics files. With --palette, `palette` samples frames of the extracted video
 for its dominant colours. With --describe, `describe` asks MusicBrainz about the
-song (album, year, genres, writers, language) once the lyrics are in. With --keep-source, `original` puts the download's own
+song (album, year, genres, writers, language) once the lyrics are in. With
+--quality, `quality` reads the download's streams and the renders' once they
+are made, before the download is deleted. With --keep-source, `original` puts the download's own
 sound back under the video, in the output format.
 `probe` runs first on its own (its metadata names the song folder); the task
 runner handles the rest.
@@ -39,6 +41,7 @@ from karaokifex.console import TaskBoard, console, register_tasks
 from karaokifex.gpu import free_gpu_memory
 from karaokifex.metadata import guess_artist_song, name_guesses, title_segments
 from karaokifex.models import Lyrics, TimedWord, VideoInfo
+from karaokifex import quality
 from karaokifex.palette import dominant_colors, without_bars
 from karaokifex.runner import RunReport, Task, TaskContext, TaskRunner, current_task
 from karaokifex.steps import download, lyrics, media, musicbrainz, separation, transcription
@@ -177,6 +180,10 @@ def build_tasks(job: Job) -> list[Task]:
     if cfg.describe:
         tasks.append(Task("describe", partial(_describe, job), deps=("lyrics",), outputs=(ws.song_json,),
                           description="MusicBrainz: album, year, genres, writers, language"))
+    if cfg.quality:
+        tasks.append(Task("quality", partial(_quality, job),
+                          deps=("download", "render") + (("original",) if cfg.keep_source else ()),
+                          outputs=(ws.quality_json,), description="resolution, frame rate, codecs, bitrates"))
     subtitle_deps = ("lyrics", "transcribe", "vocal_activity", "force_align")
     # Without burned-in lyrics the render doesn't wait for them; the subtitles step still writes the lyrics files.
     render_deps = ("extract_video", "separate_karaoke") + (("subtitles",) if cfg.burn_lyrics else ())
@@ -288,6 +295,21 @@ def describe_song(target: Path, artist: str, song: str, language: str | None = N
     about["language"] = about.get("language") or language
     _write_json(target, about)
     return about
+
+
+def _quality(job: Job, ctx: TaskContext) -> str:
+    ws = job.workspace
+    ffprobe = job.ffmpeg.ffprobe
+    source = {**quality.summary(ws.source, ffprobe=ffprobe), "from": "the download"}
+    renders = {"karaoke": job.output_video, **({"original": job.original_video} if job.config.keep_source else {})}
+    q = quality.write_quality(ws.quality_json, source=source, renders=renders, ffprobe=ffprobe)
+    v, a = source.get("video") or {}, source.get("audio") or {}
+    video_rate = f" {round(v['bitrate'] / 1000)} kb/s" if v.get("bitrate") else ""
+    audio_rate = f"{round(a['bitrate'] / 1000)} kb/s" if a.get("bitrate") else "? kb/s"
+    text = (f"source {v.get('width')}x{v.get('height')} {v.get('codec')} {v.get('fps') or '?'} fps{video_rate}, "
+            f"audio {a.get('codec')} {audio_rate}" + (", upscaled" if q["upscaled"] else ""))
+    log.info("quality: %s", text)
+    return text
 
 
 def _separate_karaoke(job: Job, ctx: TaskContext) -> None:

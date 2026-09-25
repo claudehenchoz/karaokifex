@@ -123,6 +123,11 @@ class Workspace:
         return self.root / "song.json"
 
     @property
+    def quality_json(self) -> Path:
+        """How good the picture and sound are (--quality): the source's and each render's streams."""
+        return self.root / "quality.json"
+
+    @property
     def final_video(self) -> Path:
         return self.root / f"{sanitize_name(self.title)} (Karaoke).mkv"
 
@@ -151,7 +156,7 @@ class Workspace:
         videos = (self.final_video, self.debug_video, self.plain_video, self.original_video)
         earlier_renders = [path for video in videos for path in self.root.glob(f"{glob.escape(video.stem)}.*")]
         keep = {self.final_video, self.subtitles, self.karaoke_backing, self.lyrics_json, self.timings_json,
-                self.info_json, self.metadata_json, self.song_json}
+                self.info_json, self.metadata_json, self.song_json, self.quality_json}
         return frozenset(keep | {p for p in earlier_renders if ".partial." not in p.name})
 
     def temp_files(self) -> list[Path]:

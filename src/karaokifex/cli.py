@@ -78,6 +78,9 @@ log = logging.getLogger("karaokifex")
 @click.option("--describe", is_flag=True,
               help="Look up what MusicBrainz knows of the song -- the album it first came out on, the year, its "
                    "genres, its writers, its language and where its artist is from -- and write it to song.json.")
+@click.option("--quality", is_flag=True,
+              help="Write quality.json: the download's resolution, frame rate, codecs and bitrates, read before it "
+                   "is deleted, and the same for each render.")
 @click.option("--debug-ass", is_flag=True,
               help="Render '(Karaoke debug).mkv' with each word coloured by what timed it "
                    "(green forced, cyan whisper, violet LRC tag, orange LRC line, red interpolated).")
