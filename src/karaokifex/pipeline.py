@@ -9,6 +9,13 @@
 One separation pass yields both stems the rest needs: the backing track (for
 render) and the lead vocals (for transcription, vocal activity and forced
 alignment). With --mix-vote, `transcribe_mix` also transcribes the full mix.
+With --no-burn-lyrics, `render` doesn't wait for `subtitles`, which still writes
+the lyrics files. With --palette, `palette` samples frames of the extracted video
+for its dominant colours. With --describe, `describe` asks MusicBrainz about the
+song (album, year, genres, writers, language) once the lyrics are in. With
+--quality, `quality` reads the download's streams and the renders' once they
+are made, before the download is deleted. With --keep-source, `original` puts the download's own
+sound back under the video, in the output format.
 `probe` runs first on its own (its metadata names the song folder); the task
 runner handles the rest.
 """
@@ -24,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 import ffmpeg
+import requests
 from rich.live import Live
 
 from karaokifex.activity import Activity
@@ -31,10 +39,12 @@ from karaokifex.ass import build_ass
 from karaokifex.config import Config
 from karaokifex.console import TaskBoard, console, register_tasks
 from karaokifex.gpu import free_gpu_memory
-from karaokifex.metadata import guess_artist_song
+from karaokifex.metadata import guess_artist_song, name_guesses, title_segments
 from karaokifex.models import Lyrics, TimedWord, VideoInfo
+from karaokifex import quality
+from karaokifex.palette import dominant_colors, without_bars
 from karaokifex.runner import RunReport, Task, TaskContext, TaskRunner, current_task
-from karaokifex.steps import download, lyrics, media, separation, transcription
+from karaokifex.steps import download, lyrics, media, musicbrainz, separation, transcription
 from karaokifex.timing import (
     Alignment,
     AlignmentPlan,
@@ -70,7 +80,18 @@ class Job:
 
     @property
     def output_video(self) -> Path:
-        return self.workspace.debug_video if self.config.debug_ass else self.workspace.final_video
+        if not self.config.burn_lyrics:
+            video = self.workspace.plain_video
+        else:
+            video = self.workspace.debug_video if self.config.debug_ass else self.workspace.final_video
+        return self._in_output_format(video)
+
+    @property
+    def original_video(self) -> Path:
+        return self._in_output_format(self.workspace.original_video)
+
+    def _in_output_format(self, video: Path) -> Path:
+        return video.with_suffix(".mp4") if self.config.browser_friendly else video
 
 
 @dataclass(frozen=True)
@@ -90,6 +111,8 @@ def prepare(config: Config) -> Job:
         log.info("looking up %s", config.url)
         info = download.probe(config.url)
         artist, song = guess_artist_song(info, config.artist, config.song)
+        if config.musicbrainz and not (config.artist and config.song):
+            artist, song = canonical_names(info, config.artist, config.song, (artist, song))
         workspace = Workspace.create(config.output_dir, f"{artist} - {song}")
         workspace.info_json.write_text(json.dumps(info.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
         device = config.resolve_device()
@@ -102,12 +125,33 @@ def prepare(config: Config) -> Job:
         current_task.reset(token)
 
 
+def canonical_names(info: VideoInfo, artist: str | None, song: str | None, guess: tuple[str, str],
+                    *, get: musicbrainz.HttpGet = requests.get) -> tuple[str, str]:
+    """Artist and song as MusicBrainz spells them, if it confirms them; otherwise `guess`. Given names win."""
+    segments = title_segments(info.title)
+    # A title that doesn't split into parts may still hold both names ('Smashing Pumpkins Mayonaise').
+    text = segments[0] if len(segments) == 1 and not (artist or song or info.artist) else None
+    try:
+        match = musicbrainz.lookup(name_guesses(info, artist, song), text, get=get)
+    except (requests.RequestException, ValueError) as error:
+        log.warning("MusicBrainz lookup failed (%s) — keeping “%s – %s”", error, *guess)
+        return guess
+    if match is None:
+        log.info("MusicBrainz isn't sure about this one — keeping “%s – %s”", *guess)
+        return guess
+    names = (artist or match.artist, song or match.song)
+    log.info("MusicBrainz: “%s – %s” (%d matching recordings%s)", *names, match.recordings,
+             "" if names == guess else f"; the video's own guess was “{guess[0]} – {guess[1]}”")
+    return names
+
+
 def build_tasks(job: Job) -> list[Task]:
     ws, cfg = job.workspace, job.config
     transcripts = (ws.transcript_json, ws.transcript_mix_json) if cfg.mix_vote else (ws.transcript_json,)
     tasks = [
         Task("lyrics", partial(_lyrics, job), outputs=(ws.lyrics_json,), description="lrclib lookup"),
-        Task("download", partial(_download, job), outputs=(ws.source,), description="yt-dlp: best video + audio"),
+        Task("download", partial(_download, job), outputs=(ws.source,),
+             description="yt-dlp: best video" + (" (H.264 if as good)" if cfg.browser_friendly else "") + " + audio"),
         Task("load_whisper", partial(_load_whisper, job), outputs=transcripts,
              description=f"whisperx {cfg.whisper_model}"),
         Task("extract_audio", partial(_extract_audio, job), deps=("download",), outputs=(ws.audio,),
@@ -115,28 +159,47 @@ def build_tasks(job: Job) -> list[Task]:
         Task("extract_video", partial(_extract_video, job), deps=("download",), outputs=(ws.video,),
              description="ffmpeg → video.mkv (no audio)"),
         Task("separate_karaoke", partial(_separate_karaoke, job), deps=("extract_audio",),
-             outputs=(ws.karaoke_backing, ws.karaoke_lead), gpu=True, description=cfg.karaoke_model),
+             outputs=(ws.karaoke_backing, ws.karaoke_lead), gpu=True, model=True, description=" + ".join(cfg.karaoke_models)),
         Task("vocal_activity", partial(_vocal_activity, job), deps=("separate_karaoke",),
              outputs=(ws.lead_activity,), description="when the lead vocals are audible"),
         Task("transcribe", partial(_transcribe, job), deps=("separate_karaoke", "load_whisper", "lyrics"),
-             outputs=(ws.transcript_json,), gpu=True, description="whisperx on the lead vocals"),
+             outputs=(ws.transcript_json,), gpu=True, model=True, description="whisperx on the lead vocals"),
     ]
     if cfg.mix_vote:
         # Depends on transcribe so it can take over the loaded model instead of loading it twice.
         tasks.append(Task("transcribe_mix", partial(_transcribe_mix, job),
                           deps=("extract_audio", "load_whisper", "lyrics", "transcribe"),
-                          outputs=(ws.transcript_mix_json,), gpu=True, description="whisperx on the full mix"))
+                          outputs=(ws.transcript_mix_json,), gpu=True, model=True, description="whisperx on the full mix"))
+    if cfg.keep_source:
+        tasks.append(Task("original", partial(_original, job), deps=("download", "extract_video"),
+                          outputs=(job.original_video,), gpu=job.ffmpeg.gpu,
+                          description="the original video with its own sound"))
+    if cfg.palette:
+        tasks.append(Task("palette", partial(_palette, job), deps=("extract_video",), outputs=(ws.metadata_json,),
+                          description="dominant colours of the video"))
+    if cfg.describe:
+        tasks.append(Task("describe", partial(_describe, job), deps=("lyrics",), outputs=(ws.song_json,),
+                          description="MusicBrainz: album, year, genres, writers, language"))
+    if cfg.quality:
+        tasks.append(Task("quality", partial(_quality, job),
+                          deps=("download", "render") + (("original",) if cfg.keep_source else ()),
+                          outputs=(ws.quality_json,), description="resolution, frame rate, codecs, bitrates"))
     subtitle_deps = ("lyrics", "transcribe", "vocal_activity", "force_align")
+    # Without burned-in lyrics the render doesn't wait for them; the subtitles step still writes the lyrics files.
+    render_deps = ("extract_video", "separate_karaoke") + (("subtitles",) if cfg.burn_lyrics else ())
+    if not cfg.burn_lyrics:
+        render_description = "karaoke audio, picture as it is (no lyrics burned in)"
+    else:
+        render_description = "darken, karaoke audio, burn in subtitles" + (" (debug colours)" if cfg.debug_ass else "")
     tasks += [
         Task("force_align", partial(_force_align, job), deps=("lyrics", "transcribe", "vocal_activity"),
-             outputs=(ws.forced_json,), gpu=True, description="wav2vec2 alignment of the known lyrics"),
+             outputs=(ws.forced_json,), gpu=True, model=True, description="wav2vec2 alignment of the known lyrics"),
         Task("subtitles", partial(_subtitles, job),
              deps=subtitle_deps + (("transcribe_mix",) if cfg.mix_vote else ()),
              outputs=(ws.subtitles, ws.debug_subtitles, ws.timings_json),
              description="lyrics + word timings → karaoke ASS"),
-        Task("render", partial(_render, job), deps=("extract_video", "separate_karaoke", "subtitles"),
-             outputs=(job.output_video,), gpu=job.ffmpeg.gpu,
-             description="darken, karaoke audio, burn in subtitles" + (" (debug colours)" if cfg.debug_ass else "")),
+        Task("render", partial(_render, job), deps=render_deps, outputs=(job.output_video,), gpu=job.ffmpeg.gpu,
+             description=render_description),
     ]
     return tasks
 
@@ -146,7 +209,7 @@ def run_pipeline(config: Config) -> PipelineResult:
     tasks = build_tasks(job)
     register_tasks(task.name for task in tasks)
     board = TaskBoard(job.title, [(task.name, task.description) for task in tasks])
-    runner = TaskRunner(tasks, gpu_slots=config.gpu_jobs, force=config.force, observer=board)
+    runner = TaskRunner(tasks, gpu_slots=config.gpu_jobs, gpu_lock=config.gpu_lock, force=config.force, observer=board)
     with Live(board, console=console, refresh_per_second=8):
         report = runner.run()
     return PipelineResult(job, report)
@@ -174,7 +237,7 @@ def _download(job: Job, ctx: TaskContext) -> None:
         ctx.progress(fraction)
         ctx.note(note)
 
-    download.download(job.config.url, job.workspace.source, on_progress)
+    download.download(job.config.url, job.workspace.source, on_progress, prefer_h264=job.config.browser_friendly)
     log.info("downloaded %s (%.0f MiB)", job.workspace.source.name, job.workspace.source.stat().st_size / 1_048_576)
 
 
@@ -188,11 +251,84 @@ def _extract_video(job: Job, ctx: TaskContext) -> None:
                         duration=job.info.duration, on_progress=ctx.progress)
 
 
+def _palette(job: Job, ctx: TaskContext) -> None:
+    ws = job.workspace
+    ctx.note("sampling frames…")
+    frames = media.sample_frames(ws.video, binary=job.ffmpeg.path, ffprobe=job.ffmpeg.ffprobe,
+                                 duration=job.info.duration)
+    if not len(frames):
+        raise RuntimeError(f"no frame of {ws.video.name} could be decoded")
+    swatches = dominant_colors(without_bars(frames))
+    _write_json(ws.metadata_json, {"palette": {"colors": [swatch.to_dict() for swatch in swatches],
+                                               "frames": len(frames)}})
+    log.info("dominant colours: %s", ", ".join(f"{swatch.hex} {swatch.weight:.0%}" for swatch in swatches))
+
+
+def _describe(job: Job, ctx: TaskContext) -> str:
+    ctx.note("asking MusicBrainz…")
+    candidates = lyrics.load_lyrics(job.workspace.lyrics_json)
+    details = describe_song(job.workspace.song_json, job.artist, job.song,
+                            job.config.language or (lyrics.guess_language(candidates[0].lines) if candidates else None))
+    return ", ".join(str(x) for x in (details.get("album"), details.get("year"), *details.get("genres", [])[:2]) if x) \
+        or "MusicBrainz knows nothing more"
+
+
+def describe_song(target: Path, artist: str, song: str, language: str | None = None, *,
+                  get: musicbrainz.HttpGet = requests.get) -> dict[str, Any]:
+    """Write song.json: the song's names and what MusicBrainz knows of it. The language is the one
+    the song's work is in, else `language` (the lyrics' or the singing's). MusicBrainz not answering
+    leaves the rest out, and says so."""
+    about: dict[str, Any] = {"artist": artist, "song": song}
+    try:
+        details = musicbrainz.describe(artist, song, get=get)
+    except (requests.RequestException, ValueError) as error:
+        log.warning("MusicBrainz didn't answer (%s): no album, year, genres or writers this time", error)
+        about["musicbrainz"] = None
+    else:
+        if details is None:
+            log.info("MusicBrainz knows no recording of “%s – %s”", artist, song)
+        else:
+            about.update(details.to_dict())
+            log.info("MusicBrainz: first out %s, on %s · %s · by %s · sung in %s", details.year or "?", details.album or "no album",
+                     ", ".join(details.genres) or "no genres", ", ".join(w.name for w in details.writers) or "?",
+                     details.language or "?")
+    about["language"] = about.get("language") or language
+    _write_json(target, about)
+    return about
+
+
+def _quality(job: Job, ctx: TaskContext) -> str:
+    ws = job.workspace
+    ffprobe = job.ffmpeg.ffprobe
+    source = {**quality.summary(ws.source, ffprobe=ffprobe), "from": "the download"}
+    renders = {"karaoke": job.output_video, **({"original": job.original_video} if job.config.keep_source else {})}
+    q = quality.write_quality(ws.quality_json, source=source, renders=renders, ffprobe=ffprobe)
+    v, a = source.get("video") or {}, source.get("audio") or {}
+    video_rate = f" {round(v['bitrate'] / 1000)} kb/s" if v.get("bitrate") else ""
+    audio_rate = f"{round(a['bitrate'] / 1000)} kb/s" if a.get("bitrate") else "? kb/s"
+    text = (f"source {v.get('width')}x{v.get('height')} {v.get('codec')} {v.get('fps') or '?'} fps{video_rate}, "
+            f"audio {a.get('codec')} {audio_rate}" + (", upscaled" if q["upscaled"] else ""))
+    log.info("quality: %s", text)
+    return text
+
+
 def _separate_karaoke(job: Job, ctx: TaskContext) -> None:
+    """Each model's lead and backing (kept per model, so a re-run resumes after the last one done),
+    then the lead averaged at the song's own level and the backing the song minus it (separation.combine)."""
     ws, cfg = job.workspace, job.config
-    separation.separate(ws.audio, model=cfg.karaoke_model, model_dir=cfg.model_dir,
-                        stems={"instrumental": ws.karaoke_backing, "vocals": ws.karaoke_lead},
-                        overlap=cfg.separation_overlap, fp16=cfg.fp16, verbose=cfg.verbose, on_stage=ctx.note)
+    pairs = []
+    for number, model in enumerate(cfg.karaoke_models):
+        lead, backing = ws.stems_dir / f"lead.{number}.wav", ws.stems_dir / f"backing.{number}.wav"
+        if not (lead.exists() and backing.exists()):
+            prefix = f"{number + 1}/{len(cfg.karaoke_models)} " if len(cfg.karaoke_models) > 1 else ""
+            separation.separate(ws.audio, model=model, model_dir=cfg.model_dir,
+                                stems={"instrumental": backing, "vocals": lead}, overlap=cfg.separation_overlap,
+                                fp16=cfg.fp16, verbose=cfg.verbose, on_stage=lambda note: ctx.note(prefix + note))
+        pairs.append((lead, backing))
+    ctx.note("the song minus the lead…")
+    gains = separation.combine(ws.audio, pairs, backing=ws.karaoke_backing, lead=ws.karaoke_lead)
+    log.info("lead vocals at the song's level (gains %s), the karaoke the song minus their average",
+             ", ".join(f"{g:.2f}" for g in gains))
 
 
 def _vocal_activity(job: Job, ctx: TaskContext) -> None:
@@ -337,18 +473,42 @@ def _subtitles(job: Job, ctx: TaskContext) -> str:
     return description
 
 
-def _render(job: Job, ctx: TaskContext) -> str:
-    ws = job.workspace
+def _source_info(job: Job) -> media.SourceInfo:
     try:
-        source = media.probe_source(ws.video, ws.source, ffprobe=job.ffmpeg.ffprobe)
+        return media.probe_source(job.workspace.video, job.workspace.source, ffprobe=job.ffmpeg.ffprobe)
     except (ffmpeg.Error, OSError) as error:
         log.warning("couldn't inspect the source video (%s) — encoding at constant quality", error)
-        source = media.SourceInfo()
-    subtitles = ws.debug_subtitles if job.config.debug_ass else ws.subtitles
+        return media.SourceInfo()
+
+
+def _original(job: Job, ctx: TaskContext) -> str:
+    """The download in the output format: the same picture treatment as the karaoke video, the source's own sound."""
+    ws = job.workspace
+    encoding = media.render(ws.video, ws.source, None, job.original_video, tool=job.ffmpeg, source=_source_info(job),
+                            target_height=job.config.target_height, browser=job.config.browser_friendly,
+                            copy_audio=True, duration=job.info.duration, on_progress=ctx.progress)
+    size = job.original_video.stat().st_size / 1_048_576
+    log.info("wrote %s (%.0f MiB) with %s", job.original_video.name, size, encoding)
+    return encoding
+
+
+def _render(job: Job, ctx: TaskContext) -> str:
+    ws = job.workspace
+    source = _source_info(job)
+    gain = None
+    if job.config.match_loudness:
+        song, karaoke = media.loudness(ws.audio, binary=job.ffmpeg.path), media.loudness(ws.karaoke_backing, binary=job.ffmpeg.path)
+        if song is not None and karaoke is not None:
+            gain = song - karaoke
+            log.info("loudness: the song %.1f LUFS, the karaoke %.1f: %+.1f dB to match", song, karaoke, gain)
+    if not job.config.burn_lyrics:
+        subtitles = None
+    else:
+        subtitles = ws.debug_subtitles if job.config.debug_ass else ws.subtitles
     encoding = media.render(ws.video, ws.karaoke_backing, subtitles, job.output_video, tool=job.ffmpeg,
                             source=source, lead=ws.karaoke_lead, lead_volume=job.config.lead_volume,
-                            darken=job.config.darken, target_height=job.config.resolution,
-                            duration=job.info.duration,
+                            darken=job.config.darken, target_height=job.config.target_height,
+                            browser=job.config.browser_friendly, duration=job.info.duration, gain_db=gain,
                             on_progress=ctx.progress)
     size = job.output_video.stat().st_size / 1_048_576
     log.info("rendered %s (%.0f MiB) with %s", job.output_video.name, size, encoding)

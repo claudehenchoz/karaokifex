@@ -111,6 +111,34 @@ def test_more_gpu_slots_allow_parallel_gpu_tasks():
     assert TaskRunner(tasks, gpu_slots=2).run().ok
 
 
+def test_model_tasks_of_two_runs_take_turns_with_a_shared_gpu_lock(tmp_path):
+    lock = threading.Lock()
+    active = peak = 0
+    both = threading.Barrier(2, timeout=5)
+
+    def model_work(ctx):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.05)
+        with lock:
+            active -= 1
+
+    def run():
+        # the other run's steps without a model (a download, a render) still overlap
+        TaskRunner([Task("download", lambda ctx: both.wait()),
+                    Task("separate", model_work, deps=("download",), gpu=True, model=True)],
+                   gpu_lock=tmp_path / "gpu.lock").run()
+
+    runs = [threading.Thread(target=run) for _ in range(2)]
+    for thread in runs:
+        thread.start()
+    for thread in runs:
+        thread.join()
+    assert peak == 1
+
+
 def test_observer_sees_the_lifecycle():
     events = []
 
