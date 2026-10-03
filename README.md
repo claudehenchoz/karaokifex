@@ -163,9 +163,10 @@ lyrics too. The result is
 
 `--browser-friendly` writes an MP4 that every browser's `<video>` plays: H.264 (High profile, 8-bit
 4:2:0), AAC audio, and the index at the front of the file ("fast start"), so playback begins while it
-loads. The download then prefers H.264 whenever YouTube offers it at the best resolution and frame rate,
-so with `--no-burn-lyrics` the video is usually copied and only the audio is encoded: a render takes
-seconds. Burned-in lyrics, other formats (VP9, AV1) and upscaling mean an H.264 encode.
+loads. The download then prefers H.264 whenever YouTube offers it at the best resolution and frame rate.
+Such a video is copied, whatever its size, whenever nothing touches the picture -- no lyrics burned in
+and no upscaling -- and only the audio is encoded: a render takes seconds. Burned-in lyrics, other
+formats (VP9, AV1) and upscaling mean an H.264 encode.
 
 `--palette` finds the video's five dominant colours and writes them to `metadata.json`, most common
 first, each with its share of the picture (black letterbox and pillarbox bars don't count):

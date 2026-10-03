@@ -72,8 +72,8 @@ log = logging.getLogger("karaokifex")
               help="Mix the isolated lead vocal back into the karaoke audio (0 = no voice, 1 = full volume).")
 @click.option("--browser-friendly", is_flag=True,
               help="Write an MP4 that every browser plays: H.264, AAC, fast start. The download prefers H.264, "
-                   "and with --no-burn-lyrics such a video is copied instead of re-encoded (--upscale "
-                   "still re-encodes).")
+                   "and such a video is copied instead of re-encoded, whatever its size, whenever nothing "
+                   "touches the picture: no lyrics burned in and no upscaling.")
 @click.option("-o", "--output-dir", type=click.Path(file_okay=False, path_type=Path), default=Path("."),
               show_default=True, help="Where the per-song folder is created.")
 @click.option("--model-dir", type=click.Path(file_okay=False, path_type=Path), default=DEFAULT_MODEL_DIR,
