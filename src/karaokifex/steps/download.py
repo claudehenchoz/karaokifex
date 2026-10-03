@@ -14,6 +14,9 @@ log = logging.getLogger(__name__)
 
 # Best video + best audio (merged), or the best single file if that's all there is.
 FORMAT = "bv*+ba/b"
+# For --browser-friendly: H.264 wins when it comes at the best resolution and frame rate on offer,
+# so the render can often copy the video instead of encoding it.
+PREFER_H264 = ["res", "fps", "vcodec:h264"]
 
 ProgressCallback = Callable[[float | None, str], None]
 
@@ -54,7 +57,7 @@ def probe(url: str) -> VideoInfo:
         return VideoInfo.from_ytdlp(ydl.sanitize_info(info))
 
 
-def download(url: str, target: Path, on_progress: ProgressCallback) -> Path:
+def download(url: str, target: Path, on_progress: ProgressCallback, *, prefer_h264: bool = False) -> Path:
     """Download best video + best audio into `target` (always an .mkv)."""
 
     def progress_hook(status: dict[str, Any]) -> None:
@@ -78,6 +81,7 @@ def download(url: str, target: Path, on_progress: ProgressCallback) -> Path:
         postprocessors=[{"key": "FFmpegVideoRemuxer", "preferedformat": "mkv"}],
         progress_hooks=[progress_hook],
         postprocessor_hooks=[postprocessor_hook],
+        **({"format_sort": PREFER_H264} if prefer_h264 else {}),
     )
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.download([url])

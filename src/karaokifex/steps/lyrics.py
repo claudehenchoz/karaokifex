@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -23,6 +24,9 @@ DURATION_TOLERANCE = 10.0  # seconds; within this, synced lyrics beat a closer p
 MAX_CANDIDATES = 3  # lyrics versions kept; the subtitles step picks the one that aligns best
 PROMPT_CHARS = 800  # whisper's prompt holds ~220 tokens
 MIN_LANGUAGE_PROBABILITY = 0.7
+ATTEMPTS = 5  # waiting 2, 4, 8, 16 s in between: lrclib is busy now and then (503) and back soon
+RETRY_WAIT = 2.0
+_RETRY = frozenset({502, 503, 504})
 
 _TIMESTAMP = re.compile(r"\[(\d+):(\d+(?:[.:]\d+)?)\]")
 _WORD_TIMESTAMP = re.compile(r"<(\d+):(\d+(?:[.:]\d+)?)>")  # enhanced LRC per-word tags
@@ -111,11 +115,29 @@ def search_lrclib(artist: str, song: str, *, get: HttpGet = requests.get, timeou
     queries = [{"track_name": song, "artist_name": artist}, {"q": f"{artist} {song}"}]
     for params in queries:
         log.debug("lrclib search %s", params)
-        response = get(SEARCH_URL, params=params, headers={"User-Agent": USER_AGENT}, timeout=timeout)
-        response.raise_for_status()
-        if results := response.json():
+        if results := _ask(params, get=get, timeout=timeout):
             return results
     return []
+
+
+def _ask(params: dict[str, str], *, get: HttpGet, timeout: float) -> list[dict[str, Any]]:
+    """One search; a busy answer, a gateway error or a timeout is asked again, waiting twice as long each time."""
+    for attempt in range(ATTEMPTS):
+        if attempt:
+            time.sleep(RETRY_WAIT * 2 ** (attempt - 1))
+        try:
+            response = get(SEARCH_URL, params=params, headers={"User-Agent": USER_AGENT}, timeout=timeout)
+        except (requests.Timeout, requests.ConnectionError) as error:
+            if attempt == ATTEMPTS - 1:
+                raise
+            log.info("lrclib didn't answer (%s), asking again", error)
+            continue
+        if response.status_code in _RETRY and attempt < ATTEMPTS - 1:
+            log.info("lrclib answered %d, asking again", response.status_code)
+            continue
+        response.raise_for_status()
+        return response.json()
+    raise AssertionError("unreachable")
 
 
 def _to_lyrics(candidate: dict[str, Any], artist: str, song: str) -> Lyrics:

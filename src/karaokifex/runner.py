@@ -3,7 +3,8 @@
 Tasks declare which tasks they depend on. Every task whose dependencies have
 finished is started immediately on a thread pool, so independent work always
 runs in parallel. GPU-heavy tasks additionally share a semaphore so they don't
-fight over video memory.
+fight over video memory; with a shared GPU lock file, the tasks that run a model
+also take turns with other runs on the same machine.
 
 Tasks may declare output files: when those already exist (and everything the
 task depends on was reused too) the task is skipped as "cached", which makes
@@ -21,6 +22,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Mapping, MutableMapping, Protocol, Sequence
+
+from karaokifex.gpu import SharedGpu
 
 log = logging.getLogger("karaokifex")
 
@@ -100,6 +103,7 @@ class Task:
     deps: tuple[str, ...] = ()
     outputs: tuple[Path, ...] = ()
     gpu: bool = False
+    model: bool = False  # runs a model on the GPU: takes the shared GPU lock, when there is one
     description: str = ""
 
     def outputs_exist(self) -> bool:
@@ -133,6 +137,7 @@ class TaskRunner:
         tasks: Sequence[Task],
         *,
         gpu_slots: int = 1,
+        gpu_lock: Path | None = None,
         force: bool = False,
         observer: RunObserver | None = None,
     ) -> None:
@@ -149,6 +154,7 @@ class TaskRunner:
         self.force = force
         self.observer: RunObserver = observer or _NullObserver()
         self._gpu = threading.Semaphore(max(1, gpu_slots))
+        self._shared = gpu_lock
 
     def run(self) -> RunReport:
         report = RunReport({name: TaskOutcome() for name in self.tasks})
@@ -212,7 +218,12 @@ class TaskRunner:
                 self._gpu.acquire()
                 context.note("")
             try:
-                return self._run_timed(task, context, outcome)
+                if not (task.model and self._shared):
+                    return self._run_timed(task, context, outcome)
+                context.note("waiting for the GPU (another song is using it)…")
+                with SharedGpu(self._shared):
+                    context.note("")
+                    return self._run_timed(task, context, outcome)
             finally:
                 self._gpu.release()
         finally:

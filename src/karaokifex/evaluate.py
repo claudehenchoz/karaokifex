@@ -11,7 +11,7 @@ words starting within 100 ms and 300 ms of the reference. `--recompute` re-runs 
 alignment from the cached intermediate files (transcript, vocal activity, forced
 alignment), so thresholds can be tuned without the GPU; `--baseline` does so with
 whisper matching only, for comparison. Keep the temporary files of golden-set songs
-(answer "no" at the cleanup prompt).
+(run karaokifex with --keep-temp).
 """
 
 from __future__ import annotations

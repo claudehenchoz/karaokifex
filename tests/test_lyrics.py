@@ -1,5 +1,7 @@
 import json
 
+import requests
+
 from karaokifex.models import LyricLine, Lyrics
 from karaokifex.steps.lyrics import (
     SEARCH_URL,
@@ -29,11 +31,13 @@ def candidate(duration, *, synced=True, instrumental=False, id=1, text="Hi there
 
 
 class FakeResponse:
-    def __init__(self, data):
+    def __init__(self, data, status_code=200):
         self._data = data
+        self.status_code = status_code
 
     def raise_for_status(self):
-        pass
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code}")
 
     def json(self):
         return self._data
@@ -140,3 +144,10 @@ def test_guess_language():
     assert guess_language(english) == "en"
     assert guess_language(french) == "fr"
     assert guess_language([LyricLine(None, "hey")]) is None
+
+
+def test_a_busy_lrclib_is_asked_again(monkeypatch):
+    monkeypatch.setattr("karaokifex.steps.lyrics.RETRY_WAIT", 0.0)
+    answers = [FakeResponse([], status_code=503), FakeResponse([], status_code=502), FakeResponse([candidate(200, id=9)])]
+    found = fetch_lyrics("Artist", "Song", 200, get=lambda *a, **k: answers.pop(0))
+    assert [lyrics.lrclib_id for lyrics in found] == [9] and not answers

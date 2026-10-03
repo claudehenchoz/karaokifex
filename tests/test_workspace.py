@@ -39,6 +39,20 @@ def test_cleanup_keeps_artifacts(tmp_path):
     assert not any(path.exists() for path in temp)
 
 
+def test_cleanup_keeps_the_lyrics_data(tmp_path):
+    ws = Workspace.create(tmp_path, "Artist - Song")
+    assert {ws.timings_json, ws.info_json, ws.metadata_json, ws.lyrics_json, ws.subtitles} <= ws.artifacts()
+
+
+def test_cleanup_keeps_the_original_but_not_the_download(tmp_path):
+    ws = Workspace.create(tmp_path, "Artist - Song")
+    original = ws.original_video.with_suffix(".mp4")
+    for path in (ws.source, original):
+        path.write_text("x")
+    assert ws.cleanup() == [ws.source]
+    assert original.exists()
+
+
 def test_cleanup_keeps_karaoke_videos_from_earlier_runs(tmp_path):
     ws = Workspace.create(tmp_path, "Artist [Live] - Song")  # glob metacharacters in the name
     earlier = ws.final_video.with_suffix(".mp4")
